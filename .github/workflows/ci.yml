@@ -34,54 +34,59 @@ jobs:
 
       - name: Lint with ruff
         run: |
-          ruff check app/ tests/
+          ruff check api/ tests/
         continue-on-error: true
 
       - name: Type check with mypy
         run: |
-          mypy app/ --ignore-missing-imports
+          mypy api/ --ignore-missing-imports
         continue-on-error: true
 
       - name: Run tests
         run: |
-          pytest -v --cov=app --cov-report=term-missing
+          pytest -v --cov=api --cov-report=term-missing
 
   build:
-      needs: test
-      runs-on: ubuntu-latest
-      permissions:
-        contents: read
-        packages: write
-      steps:
-        - uses: actions/checkout@v4
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
 
-        - name: Normalize image name (lowercase)
-          run: echo "IMAGE_NAME_LOWER=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+      - name: Normalize image name (lowercase)
+        run: echo "IMAGE_NAME_LOWER=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
-        - name: Log in to Container Registry
-          uses: docker/login-action@v3
-          with:
-            registry: ${{ env.REGISTRY }}
-            username: ${{ github.actor }}
-            password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Buildx (docker-container driver)
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
 
-        - name: Extract metadata
-          id: meta
-          uses: docker/metadata-action@v5
-          with:
-            images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}
-            tags: |
-              type=ref,event=branch
-              type=ref,event=pr
-              type=sha,prefix={{branch}}-
-              type=raw,value=latest,enable={{is_default_branch}}
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-        - name: Build and push Docker image
-          uses: docker/build-push-action@v5
-          with:
-            context: .
-            push: true
-            tags: ${{ steps.meta.outputs.tags }}
-            labels: ${{ steps.meta.outputs.labels }}
-            cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}:buildcache
-            cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}:buildcache,mode=max
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,format=short,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
