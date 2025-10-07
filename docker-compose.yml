@@ -1,0 +1,17 @@
+
+services:
+  stt:
+    image: ghcr.io/sherwinwater/speech-to-text-service:latest
+    # For local dev you can build instead:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_SIZE=${MODEL_SIZE:-small}
+      - COMPUTE_TYPE=${COMPUTE_TYPE:-int8}
+      - MAX_FILE_MB=${MAX_FILE_MB:-30}
+      - MAX_DURATION_SEC=${MAX_DURATION_SEC:-600}
+    volumes:
+      - ./models:/root/.cache/whisper
+      - ./client/web:/server/client/web:ro
+    restart: unless-stopped

@@ -1,0 +1,83 @@
+body {
+    font-family: system-ui, sans-serif;
+    max-width: 800px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}
+
+.cards {
+    display: grid;
+    gap: 1rem;
+}
+
+.card {
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 1rem;
+}
+
+.row {
+    display: flex;
+    gap: .5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+pre {
+    white-space: pre-wrap;
+    background: #fafafa;
+    border: 1px solid #eee;
+    border-radius: 8px;
+    padding: .75rem;
+    max-height: 320px;
+    overflow: auto;
+}
+
+.muted {
+    color: #666;
+    font-size: .9rem;
+    padding-bottom: 1rem;
+}
+
+.hidden {
+    display: none;
+}
+
+button {
+    padding: .5rem .8rem;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: #fff;
+    cursor: pointer;
+}
+
+button:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+}
+
+input[type=file] {
+    padding: .4rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.tabs {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.tab {
+    padding: .4rem .7rem;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.tab.active {
+    background: #111;
+    color: #fff;
+    border-color: #111;
+}
