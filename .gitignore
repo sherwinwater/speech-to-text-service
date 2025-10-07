@@ -37,9 +37,6 @@ env/
 .DS_Store
 Thumbs.db
 
-# Environment
-.env
-.env.local
 
 # Models (large ML model files)
 /models/
