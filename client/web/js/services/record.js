@@ -1,4 +1,5 @@
-import { POST_URL } from '../config/config.js';
+import { POST_URL, withModelSize } from '../config/config.js';
+import { getModelSize } from '../components/modelSelector.js';
 
 /**
  * Initialize record mode functionality
@@ -31,7 +32,9 @@ export function initRecord() {
                 form.append('file', blob, 'recording.webm');
 
                 try {
-                    const res = await fetch(POST_URL, { method: 'POST', body: form });
+                    const modelSize = getModelSize('record');
+                    const url = withModelSize(POST_URL, modelSize);
+                    const res = await fetch(url, { method: 'POST', body: form });
                     const js = await res.json();
                     outRecord.textContent = js.text ? js.text : JSON.stringify(js, null, 2);
                     recStatus.textContent = '';

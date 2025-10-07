@@ -17,7 +17,22 @@ class TranscriptResult:
     model: str
 
 class Transcriber:
-    def transcribe(self, wav_path: str, language: Optional[str], model_size: str, word_timestamps: bool) -> TranscriptResult:
+    def transcribe(
+        self,
+        wav_path: str,
+        language: Optional[str],
+        model_size: str,
+        word_timestamps: bool
+    ) -> TranscriptResult:
+        raise NotImplementedError
+
+    def transcribe_array(
+        self,
+        audio_array,
+        language: Optional[str] = None,
+        model_size: str = "small",
+        word_timestamps: bool = False
+    ) -> TranscriptResult:
         raise NotImplementedError
 
 class FasterWhisperTranscriber(Transcriber):
@@ -72,6 +87,36 @@ class FasterWhisperTranscriber(Transcriber):
 
 class FakeTranscriber(Transcriber):
     """Used in tests to avoid downloading real models."""
-    def transcribe(self, wav_path: str, language: Optional[str], model_size: str, word_timestamps: bool) -> TranscriptResult:
-        seg = TranscriptSegment(start=0.0, end=1.0, text="hello world")
-        return TranscriptResult(text="hello world", language=language or "en", duration_sec=1.0, segments=[seg], model=f"fake:{model_size or 'small'}")
+    def __init__(self):
+        self._default_segment = TranscriptSegment(start=0.0, end=1.0, text="hello world")
+
+    def _build_result(
+        self,
+        language: Optional[str],
+        model_size: Optional[str]
+    ) -> TranscriptResult:
+        return TranscriptResult(
+            text="hello world",
+            language=language or "en",
+            duration_sec=1.0,
+            segments=[self._default_segment],
+            model=f"fake:{model_size or 'small'}"
+        )
+
+    def transcribe(
+        self,
+        wav_path: str,
+        language: Optional[str],
+        model_size: str,
+        word_timestamps: bool
+    ) -> TranscriptResult:
+        return self._build_result(language, model_size)
+
+    def transcribe_array(
+        self,
+        audio_array,
+        language: Optional[str] = None,
+        model_size: str = "small",
+        word_timestamps: bool = False
+    ) -> TranscriptResult:
+        return self._build_result(language, model_size)

@@ -1,4 +1,5 @@
-import { WS_URL } from '../config/config.js';
+import { WS_URL, withModelSize } from '../config/config.js';
+import { getModelSize } from '../components/modelSelector.js';
 
 /**
  * Initialize live mode functionality
@@ -63,7 +64,8 @@ export function initLive() {
             liveStatus.textContent = 'Connecting...';
 
             // Step 3: NOW create WebSocket (after audio is ready)
-            ws = new WebSocket(WS_URL);
+            const liveModel = getModelSize('live');
+            ws = new WebSocket(withModelSize(WS_URL, liveModel));
             ws.binaryType = 'arraybuffer';
 
             ws.onopen = () => {
@@ -73,7 +75,8 @@ export function initLive() {
                 ws.send(JSON.stringify({
                     type: 'start',
                     format: 's16le',
-                    rate: 16000
+                    rate: 16000,
+                    model_size: liveModel,
                 }));
                 console.log('[WS] Handshake sent');
                 // Now enable the stop button

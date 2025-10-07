@@ -19,6 +19,12 @@
     <!-- Upload mode -->
     <div id="panel-upload" class="card">
         <h3>Upload an audio file</h3>
+        <div class="model-select" data-group="upload">
+            <span class="model-label">Preference:</span>
+            <button type="button" class="model-btn active" data-group="upload" data-size="tiny">Fast</button>
+            <button type="button" class="model-btn" data-group="upload" data-size="base">Balanced</button>
+            <button type="button" class="model-btn" data-group="upload" data-size="small">Accurate</button>
+        </div>
         <div class="row">
             <input id="file" type="file" accept="audio/*"/>
             <button id="send">Transcribe</button>
@@ -30,6 +36,12 @@
     <!-- Record mode -->
     <div id="panel-record" class="card hidden">
         <h3>Record from microphone</h3>
+        <div class="model-select" data-group="record">
+            <span class="model-label">Preference:</span>
+            <button type="button" class="model-btn active" data-group="record" data-size="tiny">Fast</button>
+            <button type="button" class="model-btn" data-group="record" data-size="base">Balanced</button>
+            <button type="button" class="model-btn" data-group="record" data-size="small">Accurate</button>
+        </div>
         <div class="row">
             <button id="rec">Start Recording</button>
             <button id="stopRec" disabled>Stop</button>
@@ -41,6 +53,12 @@
     <!-- Live mode -->
     <div id="panel-live" class="card hidden">
         <h3>Live transcription</h3>
+        <div class="model-select" data-group="live">
+            <span class="model-label">Preference:</span>
+            <button type="button" class="model-btn active" data-group="live" data-size="tiny">Fast</button>
+            <button type="button" class="model-btn" data-group="live" data-size="base">Balanced</button>
+            <button type="button" class="model-btn" data-group="live" data-size="small">Accurate</button>
+        </div>
         <div class="row">
             <button id="live">Start Live</button>
             <button id="stopLive" disabled>Stop</button>

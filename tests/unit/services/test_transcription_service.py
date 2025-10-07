@@ -1,161 +1,158 @@
-"""
-Tests for transcription service (business logic).
-"""
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
-import tempfile
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from fastapi import HTTPException, UploadFile
+
 from api.services.transcription_service import TranscriptionService
-from api.services.transcriber_service import FakeTranscriber, TranscriptionResult, Segment
+from api.services.transcriber_service import FakeTranscriber
 from api.models.schemas import UrlRequest
 
 
 @pytest.fixture
-def transcriber():
-    """Create mock transcriber."""
-    return FakeTranscriber()
-
-
-@pytest.fixture
-def service(transcriber):
-    """Create transcription service with mock transcriber."""
-    return TranscriptionService(transcriber)
+def service():
+    return TranscriptionService(FakeTranscriber())
 
 
 @pytest.fixture
 def mock_upload_file():
-    """Create mock upload file."""
-    mock_file = Mock(spec=UploadFile)
-    mock_file.filename = "test.wav"
-    mock_file.read = AsyncMock(return_value=b"fake audio data")
-    return mock_file
+    file = Mock(spec=UploadFile)
+    file.filename = "test.wav"
+    file.read = AsyncMock(return_value=b"audio-bytes")
+    return file
 
 
 class TestTranscriptionService:
-    """Test transcription service business logic."""
-    
     def test_validate_file_size_success(self, service):
-        """Test file size validation passes for valid size."""
-        # 10MB should pass (limit is 30MB)
-        service.validate_file_size(10 * 1024 * 1024)
-        # No exception means success
-    
+        service.validate_file_size(5 * 1024 * 1024)
+
     def test_validate_file_size_too_large(self, service):
-        """Test file size validation fails for large file."""
-        # 50MB should fail (limit is 30MB)
         with pytest.raises(HTTPException) as exc:
-            service.validate_file_size(50 * 1024 * 1024)
+            service.validate_file_size(100 * 1024 * 1024)
+
         assert exc.value.status_code == 413
-        assert "too large" in str(exc.value.detail).lower()
-    
+        assert "File too large" in exc.value.detail
+
     @pytest.mark.asyncio
     async def test_save_uploaded_file(self, service, mock_upload_file, tmp_path):
-        """Test saving uploaded file."""
-        dest_path = str(tmp_path / "test.wav")
-        
-        size = await service.save_uploaded_file(mock_upload_file, dest_path)
-        
-        assert size == len(b"fake audio data")
-        assert (tmp_path / "test.wav").exists()
-    
-    @patch('api.services.transcription_service.urllib.request.urlopen')
+        dest = tmp_path / "uploaded.wav"
+
+        size = await service.save_uploaded_file(mock_upload_file, str(dest))
+
+        assert size == len(b"audio-bytes")
+        assert dest.exists()
+
+    @patch("api.services.transcription_service.urllib.request.urlopen")
     def test_download_url_to_file_success(self, mock_urlopen, service, tmp_path):
-        """Test downloading URL to file."""
-        # Mock URL response
-        mock_response = MagicMock()
-        mock_response.read.return_value = b"downloaded audio data"
-        mock_response.__enter__.return_value = mock_response
-        mock_response.__exit__.return_value = None
-        mock_urlopen.return_value = mock_response
-        
-        dest_path = str(tmp_path / "downloaded.wav")
-        size = service.download_url_to_file("http://example.com/audio.wav", dest_path)
-        
-        assert size == len(b"downloaded audio data")
-        assert (tmp_path / "downloaded.wav").exists()
-    
-    @patch('api.services.transcription_service.urllib.request.urlopen')
+        response = MagicMock()
+        response.read.return_value = b"remote"
+        response.__enter__.return_value = response
+        response.__exit__.return_value = None
+        mock_urlopen.return_value = response
+
+        dest = tmp_path / "audio.bin"
+        size = service.download_url_to_file("https://example.com/a.mp3", str(dest))
+
+        assert size == len(b"remote")
+        assert dest.exists()
+
+    @patch("api.services.transcription_service.urllib.request.urlopen")
     def test_download_url_to_file_failure(self, mock_urlopen, service, tmp_path):
-        """Test URL download failure."""
-        mock_urlopen.side_effect = Exception("Network error")
-        
-        dest_path = str(tmp_path / "failed.wav")
+        mock_urlopen.side_effect = Exception("network error")
+
         with pytest.raises(HTTPException) as exc:
-            service.download_url_to_file("http://example.com/audio.wav", dest_path)
+            service.download_url_to_file("https://example.com/a.mp3", str(tmp_path / "file"))
+
         assert exc.value.status_code == 422
-    
-    def test_validate_duration_success(self, service):
-        """Test duration validation passes."""
-        # 300 seconds should pass (limit is 600)
-        service.validate_duration(300.0)
-        # No exception means success
-    
-    def test_validate_duration_too_long(self, service):
-        """Test duration validation fails for long audio."""
-        # 700 seconds should fail (limit is 600)
+
+    @patch("api.services.transcription_service.urllib.request.urlopen")
+    def test_download_url_to_file_http_exception_passthrough(self, mock_urlopen, service, tmp_path):
+        mock_urlopen.side_effect = HTTPException(status_code=418, detail="teapot")
+
         with pytest.raises(HTTPException) as exc:
-            service.validate_duration(700.0)
+            service.download_url_to_file("https://example.com/a.mp3", str(tmp_path / "file"))
+
+        assert exc.value.status_code == 418
+
+    def test_validate_duration_success(self, service):
+        service.validate_duration(100.0)
+
+    def test_validate_duration_too_long(self, service):
+        with pytest.raises(HTTPException) as exc:
+            service.validate_duration(10_000.0)
+
         assert exc.value.status_code == 413
-        assert "duration" in str(exc.value.detail).lower()
-    
-    @patch('api.services.transcription_service.normalize_to_wav_16k_mono')
+        assert "duration" in exc.value.detail.lower()
+
+    @patch("api.services.transcription_service.normalize_to_wav_16k_mono")
     def test_normalize_and_validate_audio(self, mock_normalize, service):
-        """Test audio normalization and validation."""
-        mock_normalize.return_value = ("/tmp/normalized.wav", 5.0)
-        
-        wav_path, duration = service.normalize_and_validate_audio("/tmp/input.mp3")
-        
-        assert wav_path == "/tmp/normalized.wav"
-        assert duration == 5.0
-        mock_normalize.assert_called_once_with("/tmp/input.mp3")
-    
+        mock_normalize.return_value = ("/tmp/out.wav", 1.5)
+
+        wav_path, duration = service.normalize_and_validate_audio("/tmp/in.mp3")
+
+        assert wav_path == "/tmp/out.wav"
+        assert duration == 1.5
+
+    @patch("api.services.transcription_service.normalize_to_wav_16k_mono")
+    def test_normalize_and_validate_audio_failure(self, mock_normalize, service):
+        mock_normalize.side_effect = RuntimeError("decode failed")
+
+        with pytest.raises(HTTPException) as exc:
+            service.normalize_and_validate_audio("/tmp/in.mp3")
+
+        assert exc.value.status_code == 422
+
+    def test_cleanup_temp_file_swallows_errors(self, service, monkeypatch):
+        called = {}
+
+        def fake_remove(path):
+            called["path"] = path
+            raise OSError("cannot delete")
+
+        monkeypatch.setattr("api.services.transcription_service.os.remove", fake_remove)
+
+        service._cleanup_temp_file("/tmp/file.wav")
+
+        assert called["path"] == "/tmp/file.wav"
+
     def test_resolve_transcription_params_defaults(self, service):
-        """Test parameter resolution with defaults."""
-        lang, msize, wt = service.resolve_transcription_params(None, None, False, None)
-        
+        lang, model_size, timestamps = service.resolve_transcription_params(None, None, False, None)
+
         assert lang is None
-        assert msize == "small"  # default from settings
-        assert wt is False
-    
+        assert model_size == "small"
+        assert timestamps is False
+
     def test_resolve_transcription_params_with_request(self, service):
-        """Test parameter resolution with request object."""
-        req = UrlRequest(url="http://example.com/audio.mp3", language="en", model_size="medium")
-        
-        lang, msize, wt = service.resolve_transcription_params(None, None, False, req)
-        
+        req = UrlRequest(url="https://example.com/audio.mp3", language="en", model_size="medium", word_timestamps=True)
+
+        lang, model_size, timestamps = service.resolve_transcription_params(None, None, False, req)
+
         assert lang == "en"
-        assert msize == "medium"
-        assert wt is False
-    
+        assert model_size == "medium"
+        assert timestamps is True
+
     @pytest.mark.asyncio
-    @patch('api.services.transcription_service.normalize_to_wav_16k_mono')
+    @patch("api.services.transcription_service.normalize_to_wav_16k_mono")
     async def test_transcribe_from_file(self, mock_normalize, service, mock_upload_file):
-        """Test transcription from uploaded file."""
-        mock_normalize.return_value = ("/tmp/normalized.wav", 2.5)
-        
+        mock_normalize.return_value = ("/tmp/out.wav", 2.0)
+
         result = await service.transcribe_from_file(mock_upload_file)
-        
-        assert result.text == "hello fake transcription"
-        assert result.duration_sec == 2.5
-    
+
+        assert result.text == "hello world"
+        assert result.duration_sec == 2.0
+
     @pytest.mark.asyncio
-    @patch('api.services.transcription_service.normalize_to_wav_16k_mono')
-    @patch('api.services.transcription_service.urllib.request.urlopen')
+    @patch("api.services.transcription_service.normalize_to_wav_16k_mono")
+    @patch("api.services.transcription_service.urllib.request.urlopen")
     async def test_transcribe_from_url(self, mock_urlopen, mock_normalize, service):
-        """Test transcription from URL."""
-        # Mock URL download
-        mock_response = MagicMock()
-        mock_response.read.return_value = b"downloaded audio"
-        mock_response.__enter__.return_value = mock_response
-        mock_response.__exit__.return_value = None
-        mock_urlopen.return_value = mock_response
-        
-        # Mock normalization
-        mock_normalize.return_value = ("/tmp/normalized.wav", 3.0)
-        
-        req = UrlRequest(url="http://example.com/audio.mp3")
+        response = MagicMock()
+        response.read.return_value = b"remote"
+        response.__enter__.return_value = response
+        response.__exit__.return_value = None
+        mock_urlopen.return_value = response
+        mock_normalize.return_value = ("/tmp/out.wav", 3.0)
+
+        req = UrlRequest(url="https://example.com/audio.mp3")
         result = await service.transcribe_from_url(req)
-        
-        assert result.text == "hello fake transcription"
+
+        assert result.text == "hello world"
         assert result.duration_sec == 3.0

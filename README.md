@@ -20,9 +20,23 @@ See [documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md) for detailed 
 
 ## Prerequisites
 - Python 3.10+
-- FFmpeg installed (`ffmpeg` in PATH)
+- FFmpeg (required for audio processing)
 - Docker (for containerized run)
 - (Optional) NVIDIA CUDA if you want GPU inference
+
+### Install FFmpeg
+
+#### MacOS
+```bash
+brew install ffmpeg
+```
+
+#### Linux (Debian/Ubuntu)
+```bash
+sudo apt-get update
+sudo apt-get install -y ffmpeg
+ffmpeg -version  # Verify installation
+```
 
 ## Quick Start
 
@@ -44,10 +58,10 @@ cp .env.example .env
 ### 3. Start the Service
 ```bash
 # Development mode (with auto-reload)
-uvicorn server.main:server --reload
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 
 # Production mode
-uvicorn server.main:server --host 0.0.0.0 --port 8000
+uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
 ### 4. Verify Installation

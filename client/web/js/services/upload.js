@@ -1,4 +1,5 @@
-import { POST_URL } from '../config/config.js';
+import { POST_URL, withModelSize } from '../config/config.js';
+import { getModelSize } from '../components/modelSelector.js';
 
 /**
  * Initialize upload mode functionality
@@ -18,7 +19,9 @@ export function initUpload() {
         form.append('file', f, f.name);
         outUpload.textContent = 'Uploading…';
         try {
-            const res = await fetch(POST_URL, { method: 'POST', body: form });
+            const modelSize = getModelSize('upload');
+            const url = withModelSize(POST_URL, modelSize);
+            const res = await fetch(url, { method: 'POST', body: form });
             const js = await res.json();
             outUpload.textContent = js.text ? js.text : JSON.stringify(js, null, 2);
         } catch (err) {

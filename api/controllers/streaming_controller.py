@@ -56,7 +56,10 @@ async def ws_transcribe(
         handshake_msg = await websocket.receive_text()
         
         try:
-            audio_format = service.parse_handshake(handshake_msg)
+            audio_format, model_size_override = service.parse_handshake(
+                handshake_msg,
+                websocket.query_params.get("model_size")
+            )
             logger.info(f"Handshake received [id={session_id}]: format={audio_format.format_type}, rate={audio_format.sample_rate}")
         except ValueError as e:
             logger.warning(f"Invalid handshake [id={session_id}]: {e}")
@@ -64,7 +67,7 @@ async def ws_transcribe(
             return
         
         # Step 2: Create session
-        session = service.create_session(session_id, audio_format)
+        session = service.create_session(session_id, audio_format, model_size_override)
         
         # Step 3: Start FFmpeg if needed
         if audio_format.needs_conversion():

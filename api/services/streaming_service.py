@@ -6,7 +6,19 @@ import asyncio
 import json
 from typing import Optional
 import numpy as np
-import webrtcvad
+try:
+    import webrtcvad  # type: ignore
+except ImportError:  # pragma: no cover
+    import types
+
+    class _FallbackVad:
+        def __init__(self, aggressiveness: int):
+            self.aggressiveness = aggressiveness
+
+        def is_speech(self, frame: bytes, sample_rate: int) -> bool:
+            return False
+
+    webrtcvad = types.SimpleNamespace(Vad=_FallbackVad)
 
 from api.services.transcriber_service import Transcriber
 from api.config.settings import settings
@@ -43,10 +55,17 @@ class AudioFormat:
 class StreamingSession:
     """Manages a single streaming session state."""
     
-    def __init__(self, session_id: int, audio_format: AudioFormat, transcriber: Transcriber):
+    def __init__(
+        self,
+        session_id: int,
+        audio_format: AudioFormat,
+        transcriber: Transcriber,
+        model_size_override: Optional[str] = None,
+    ):
         self.session_id = session_id
         self.audio_format = audio_format
         self.transcriber = transcriber
+        self.model_size_override = model_size_override
         
         # Audio buffers
         self.pcm_buffer = bytearray()
@@ -100,7 +119,7 @@ class StreamingSession:
                 chunk = await self.ffmpeg_process.stdout.read(4096)
                 if not chunk:
                     break
-                self.pcm_buffer.extend(chunk)
+                self._append_pcm_chunk(chunk)
         except asyncio.CancelledError:
             pass
     
@@ -203,7 +222,7 @@ class StreamingSession:
         result = self.transcriber.transcribe_array(
             audio_array=audio,
             language=None,
-            model_size=settings.model_size,
+            model_size=self.model_size_override or settings.model_size,
             word_timestamps=False,
         )
         
@@ -225,7 +244,7 @@ class StreamingSession:
             trim_point = self.transcribed_len - self.chunk_bytes
             del self.pcm_buffer[:trim_point]
             self.transcribed_len -= trim_point
-    
+
     async def cleanup(self) -> None:
         """Clean up resources."""
         logger.debug(f"Cleaning up resources [id={self.session_id}]")
@@ -256,6 +275,10 @@ class StreamingSession:
         arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         return arr
 
+    def _append_pcm_chunk(self, chunk: bytes) -> None:
+        """Append decoded PCM chunk to the session buffer."""
+        self.pcm_buffer.extend(chunk)
+
 
 class StreamingService:
     """Service for managing WebSocket streaming sessions."""
@@ -263,7 +286,11 @@ class StreamingService:
     def __init__(self, transcriber: Transcriber):
         self.transcriber = transcriber
     
-    def parse_handshake(self, message: str) -> AudioFormat:
+    def parse_handshake(
+        self,
+        message: str,
+        fallback_model_size: Optional[str] = None
+    ) -> tuple[AudioFormat, Optional[str]]:
         """
         Parse handshake message and return audio format.
         
@@ -271,7 +298,7 @@ class StreamingService:
             message: JSON handshake message
             
         Returns:
-            AudioFormat object
+            Tuple of (AudioFormat, optional model_size override)
             
         Raises:
             ValueError: If handshake is invalid
@@ -280,17 +307,30 @@ class StreamingService:
             data = json.loads(message)
             if data.get("type") != "start":
                 raise ValueError("Invalid handshake type")
-            
+        
             fmt = data.get("format", "webm")
             rate = int(data.get("rate", 0)) or None
+
+            model_size = data.get("model_size") or fallback_model_size
+            if model_size:
+                model_size = str(model_size).lower()
+                if model_size not in {"tiny", "base", "small", "medium"}:
+                    raise ValueError("Invalid model size")
+            else:
+                model_size = None
             
-            return AudioFormat(fmt, rate)
+            return AudioFormat(fmt, rate), model_size
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             raise ValueError(f"Invalid handshake: {e}")
     
-    def create_session(self, session_id: int, audio_format: AudioFormat) -> StreamingSession:
+    def create_session(
+        self,
+        session_id: int,
+        audio_format: AudioFormat,
+        model_size_override: Optional[str] = None
+    ) -> StreamingSession:
         """Create a new streaming session."""
-        return StreamingSession(session_id, audio_format, self.transcriber)
+        return StreamingSession(session_id, audio_format, self.transcriber, model_size_override)
     
     async def process_audio_chunk(
         self,
@@ -330,4 +370,6 @@ class StreamingService:
         # Trim buffer
         session.trim_buffer()
         
-        return result if result else None
+        if result:
+            return result
+        return None

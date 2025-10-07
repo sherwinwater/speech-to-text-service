@@ -1,7 +1,7 @@
-"""
-Shared pytest fixtures and configuration.
-"""
+"""Shared pytest fixtures and configuration."""
 
+import sys
+import types
 import pytest
 import io
 import wave
@@ -13,18 +13,40 @@ from api.controllers.transcription_controller import get_transcriber
 from api.services.transcriber_service import FakeTranscriber
 
 
+class _StubVad:
+    """Minimal VAD stub so imports succeed without native wheels."""
+
+    def __init__(self, aggressiveness: int):
+        self.aggressiveness = aggressiveness
+
+    def is_speech(self, frame, sample_rate):
+        return False
+
+
+def ensure_webrtc_stub() -> None:
+    sys.modules.setdefault("webrtcvad", types.SimpleNamespace(Vad=_StubVad))
+
+
+ensure_webrtc_stub()
+
+
 @pytest.fixture
 def mock_transcriber():
     """Provide a fake transcriber for testing."""
+    ensure_webrtc_stub()
     return FakeTranscriber()
 
 
 @pytest.fixture
 def test_client():
     """Provide a test client with mocked dependencies."""
+    ensure_webrtc_stub()
     app.dependency_overrides[get_transcriber] = lambda: FakeTranscriber()
-    yield TestClient(app)
-    app.dependency_overrides.clear()
+    client = TestClient(app)
+    try:
+        yield client
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture

@@ -2,7 +2,6 @@
 services:
   stt:
     image: ghcr.io/sherwinwater/speech-to-text-service:latest
-    # For local dev you can build instead:
     build: .
     ports:
       - "8000:8000"
