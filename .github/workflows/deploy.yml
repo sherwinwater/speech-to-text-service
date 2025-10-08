@@ -29,32 +29,41 @@ jobs:
           script: |
             set -euo pipefail
 
-            # Resolve deploy path (fallback to ~/speech-to-text-service)
+            # Resolve deploy path with safe fallback and ~ expansion
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
             DEPLOY_PATH="${DEPLOY_PATH:-$HOME/speech-to-text-service}"
             cd "$DEPLOY_PATH"
 
-            # Optional: keep local checkout fresh if you build on server
+            # Determine the image tag to deploy:
+            # - for workflow_run: use head_sha of the CI workflow that triggered this
+            # - for manual dispatch: fall back to this workflow's commit sha
+            IMAGE_TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
+            echo "[info] Deploying image tag: ${IMAGE_TAG}"
+
+            # Optional: keep local checkout fresh if you also build on the server
             if [ -d .git ]; then
               git fetch origin main
               git reset --hard origin/main
             fi
 
-            # Login to GHCR on the remote host using a PAT
-            echo "${{ secrets.GHCR_TOKEN }}" | sudo docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
-
-            # Pull and restart using Compose (support v2 and legacy)
-            if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-              sudo docker compose pull
-              sudo docker compose up -d --remove-orphans
-              sudo docker compose ps
+            # Ensure .env contains IMAGE_TAG=<sha> (compose auto-loads .env)
+            touch .env
+            if grep -q '^IMAGE_TAG=' .env; then
+              sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env
             else
-              sudo docker-compose pull
-              sudo docker-compose up -d --remove-orphans
-              sudo docker-compose ps
+              echo "IMAGE_TAG=${IMAGE_TAG}" >> .env
             fi
 
-            # Clean up old images
-            sudo docker image prune -af
+            # Pull and restart using the prod profile; image is public, no login required
+            if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+              sudo docker compose --profile prod pull
+              sudo docker compose --profile prod up -d --remove-orphans
+              sudo docker compose --profile prod ps
+            else
+              sudo docker-compose --profile prod pull
+              sudo docker-compose --profile prod up -d --remove-orphans
+              sudo docker-compose --profile prod ps
+            fi
 
+            sudo docker image prune -af
             echo "Deployment completed successfully!"
