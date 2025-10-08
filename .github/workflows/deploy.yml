@@ -3,8 +3,7 @@ name: Deploy
 on:
   workflow_run:
     workflows: ["CI"]
-    types:
-      - completed
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -15,8 +14,9 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: aws
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
-    
+
     steps:
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.2.0
@@ -25,27 +25,36 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
+          script_stop: true
           script: |
-            cd ${{ secrets.DEPLOY_PATH || '~/speech-to-text-service' }}
-            
-            # Pull latest code (if repo is cloned on server)
+            set -euo pipefail
+
+            # Resolve deploy path (fallback to ~/speech-to-text-service)
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            DEPLOY_PATH="${DEPLOY_PATH:-$HOME/speech-to-text-service}"
+            cd "$DEPLOY_PATH"
+
+            # Optional: keep local checkout fresh if you build on server
             if [ -d .git ]; then
-              git pull origin main
+              git fetch origin main
+              git reset --hard origin/main
             fi
-            
-            # Login to GitHub Container Registry
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
-            # Pull latest image
-            docker compose pull
-            
-            # Restart services
-            docker compose up -d --remove-orphans
-            
+
+            # Login to GHCR on the remote host using a PAT
+            echo "${{ secrets.GHCR_TOKEN }}" | sudo docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
+
+            # Pull and restart using Compose (support v2 and legacy)
+            if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+              sudo docker compose pull
+              sudo docker compose up -d --remove-orphans
+              sudo docker compose ps
+            else
+              sudo docker-compose pull
+              sudo docker-compose up -d --remove-orphans
+              sudo docker-compose ps
+            fi
+
             # Clean up old images
-            docker image prune -af
-            
-            # Show status
-            docker compose ps
-            
+            sudo docker image prune -af
+
             echo "Deployment completed successfully!"

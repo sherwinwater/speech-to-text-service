@@ -5,6 +5,8 @@
 
 A production-ready FastAPI + `faster-whisper` service that ingests audio from uploads or URLs, normalizes it with FFmpeg, runs transcription, and returns structured JSON that powers both API clients and the bundled web UI.
 
+Hosted demo: visit https://stt.shuwen.cloud/web to try file uploads, in-browser recording, and live streaming without setting up anything locally.
+
 ## Architecture Overview
 
 The system follows a clean architecture split into controllers (REST/WebSocket) under `api/controllers`, domain services in `api/services`, and adapters for audio/model handling. Requests enter FastAPI, audio is normalized to 16 kHz mono WAV through FFmpeg, and transcripts are generated via Faster Whisper with optional streaming through `/ws/transcribe`. Docker images wrap the app with model caching, and CI/CD pipelines publish GHCR images (`:dev`, `:qa`, `:latest`) that the compose profiles consume. See `documentation/ARCHITECTURE.md` for diagrams and deeper detail.
@@ -230,6 +232,17 @@ curl http://localhost:8000/health
 ### Transcription with Sample Audio
 ```bash
 curl -X POST http://localhost:8000/transcribe \
+  -F "file=@samples/hello.m4a" | jq
+```
+
+## Try It in Production
+
+- Visit `https://stt.shuwen.cloud/web` to experiment with uploads, in-browser recording, and live streaming against the hosted environment.
+- Validate service health with `curl https://stt.shuwen.cloud/health`.
+- Run a production transcription by swapping the base URL, e.g.:
+
+```bash
+curl -X POST https://stt.shuwen.cloud/transcribe \
   -F "file=@samples/hello.m4a" | jq
 ```
 
