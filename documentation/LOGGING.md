@@ -12,18 +12,20 @@ YYYY-MM-DD HH:MM:SS | LEVEL    | LOGGER_NAME          | MESSAGE
 
 Example:
 ```
-2025-10-06 21:40:15 | INFO     | app.api              | Transcribe request: source=hello.m4a, language=None, model=None
-2025-10-06 21:40:15 | INFO     | app.api              | Starting transcription: model=small, language=auto
-2025-10-06 21:40:16 | INFO     | app.api              | Transcription complete: 42 chars, detected_lang=en
+2025-10-06 21:40:15 | INFO     | server.controller.transcription | Transcribe request: source=hello.m4a, language=None, model=None
+2025-10-06 21:40:15 | INFO     | server.controller.transcription | Starting transcription: model=small, language=auto
+2025-10-06 21:40:16 | INFO     | server.controller.transcription | Transcription complete: 42 chars, detected_lang=en
 ```
 
 ## Logger Names
 
 | Logger | Purpose | Level | Notes |
 |--------|---------|-------|-------|
-| `app.api` | HTTP API endpoints | INFO | Transcribe requests, file uploads |
-| `app.websocket` | WebSocket streaming | INFO | Client connections, handshakes, sessions |
-| `app.startup` | Application startup | INFO | Initialization, configuration |
+| `server.controller.transcription` | HTTP API endpoints | INFO | Transcribe requests, file uploads |
+| `server.controller.streaming` | WebSocket controller | INFO | Client connections, handshakes, sessions |
+| `server.service.transcription` | Transcription service | DEBUG | File size, normalization, transcription steps |
+| `server.service.streaming` | Streaming service/session | DEBUG | Buffer state, ffmpeg, VAD decisions |
+| `server.startup` | Application startup | INFO | Initialization, configuration |
 | `uvicorn` | Server lifecycle | INFO | Server start/stop |
 | `uvicorn.error` | Server events | WARNING | Misleadingly named - handles general events like "connection open/closed" |
 | `uvicorn.access` | HTTP access logs | WARNING | HTTP request logs (hidden to reduce noise) |
@@ -38,7 +40,7 @@ Example:
 
 ## Configuration
 
-Logging is configured in `app/logging_config.py` and applied on application startup.
+Logging is configured in `api/config/logging.py` and applied on application startup.
 
 ### How It Works
 
@@ -48,14 +50,14 @@ Logging is configured in `app/logging_config.py` and applied on application star
 4. **Sets appropriate log levels** for each component
 
 ```python
-from server.logging_config import configure_logging, get_logger
+from api.config.logging import configure_logging, get_logger
 
 # Configure on startup (done automatically in main.py)
 configure_logging(level="INFO")
 
 # Get a logger in your module
-logger = get_logger("my_module")
-logger.info("Message")
+logger = get_logger("controller.transcription")
+logger.info("Endpoint ready")
 ```
 
 ### Why Startup Event?
@@ -79,8 +81,8 @@ INFO:     Waiting for application startup.
 This is **expected and unavoidable** - these messages appear before FastAPI's startup event runs. Once the application starts, all subsequent logs use our structured format:
 
 ```
-2025-10-06 21:45:00 | INFO     | app.startup          | Application starting up
-2025-10-06 21:45:00 | INFO     | app.startup          | Model: small, Compute: int8
+2025-10-06 21:45:00 | INFO     | server.startup       | Application starting up
+2025-10-06 21:45:00 | INFO     | server.startup       | Model: small, Compute: int8
 ```
 
 ### Why is `uvicorn.error` Misleading?
@@ -98,11 +100,11 @@ This is a uvicorn design choice. We set it to WARNING level to hide these routin
 Each WebSocket connection gets a unique `client_id` for tracking:
 
 ```
-2025-10-06 21:40:20 | INFO     | app.websocket        | Client connected [id=140234567890]
-2025-10-06 21:40:20 | INFO     | app.websocket        | Handshake received [id=140234567890]: format=s16le, rate=16000
-2025-10-06 21:40:20 | INFO     | app.websocket        | Direct PCM mode [id=140234567890]: no conversion needed
-2025-10-06 21:40:25 | INFO     | app.websocket        | Stop signal received [id=140234567890]
-2025-10-06 21:40:25 | INFO     | app.websocket        | Session finalized [id=140234567890]
+2025-10-06 21:40:20 | INFO     | server.controller.streaming | Client connected [id=140234567890]
+2025-10-06 21:40:20 | INFO     | server.controller.streaming | Handshake received [id=140234567890]: format=s16le, rate=16000
+2025-10-06 21:40:20 | INFO     | server.controller.streaming | Direct PCM mode [id=140234567890]: no conversion needed
+2025-10-06 21:40:25 | INFO     | server.controller.streaming | Stop signal received [id=140234567890]
+2025-10-06 21:40:25 | INFO     | server.controller.streaming | Session finalized [id=140234567890]
 ```
 
 ## Benefits
@@ -121,16 +123,16 @@ INFO:     connection closed
 
 ### After (Structured)
 ```
-2025-10-06 21:40:15 | INFO     | app.api              | Transcribe request: source=hello.m4a, language=None, model=None
-2025-10-06 21:40:15 | DEBUG    | app.api              | File uploaded: hello.m4a, size=0.45MB
-2025-10-06 21:40:15 | DEBUG    | app.api              | Audio normalized: duration=2.50s
-2025-10-06 21:40:15 | INFO     | app.api              | Starting transcription: model=small, language=auto
-2025-10-06 21:40:16 | INFO     | app.api              | Transcription complete: 42 chars, detected_lang=en
-2025-10-06 21:40:20 | INFO     | app.websocket        | Client connected [id=140234567890]
-2025-10-06 21:40:20 | INFO     | app.websocket        | Handshake received [id=140234567890]: format=s16le, rate=16000
-2025-10-06 21:40:20 | INFO     | app.websocket        | Direct PCM mode [id=140234567890]: no conversion needed
-2025-10-06 21:40:25 | INFO     | app.websocket        | Stop signal received [id=140234567890]
-2025-10-06 21:40:25 | INFO     | app.websocket        | Session finalized [id=140234567890]
+2025-10-06 21:40:15 | INFO     | server.controller.transcription | Transcribe request: source=hello.m4a, language=None, model=None
+2025-10-06 21:40:15 | DEBUG    | server.service.transcription   | File uploaded: hello.m4a, size=0.45MB
+2025-10-06 21:40:15 | DEBUG    | server.service.transcription   | Audio normalized: duration=2.50s
+2025-10-06 21:40:15 | INFO     | server.service.transcription   | Starting transcription: model=small, language=auto
+2025-10-06 21:40:16 | INFO     | server.service.transcription   | Transcription complete: 42 chars, detected_lang=en
+2025-10-06 21:40:20 | INFO     | server.controller.streaming    | Client connected [id=140234567890]
+2025-10-06 21:40:20 | INFO     | server.controller.streaming    | Handshake received [id=140234567890]: format=s16le, rate=16000
+2025-10-06 21:40:20 | INFO     | server.controller.streaming    | Direct PCM mode [id=140234567890]: no conversion needed
+2025-10-06 21:40:25 | INFO     | server.controller.streaming    | Stop signal received [id=140234567890]
+2025-10-06 21:40:25 | INFO     | server.controller.streaming    | Session finalized [id=140234567890]
 ```
 
 ## Advantages
@@ -148,10 +150,10 @@ INFO:     connection closed
 ### By Component
 ```bash
 # API logs only
-docker compose logs | grep "app.api"
+docker compose logs | grep "server.controller.transcription"
 
 # WebSocket logs only
-docker compose logs | grep "app.websocket"
+docker compose logs | grep "server.controller.streaming"
 ```
 
 ### By Level
@@ -178,7 +180,7 @@ Control log level via environment variable:
 LOG_LEVEL=DEBUG
 
 # Or at runtime
-LOG_LEVEL=DEBUG uvicorn server.main:server
+LOG_LEVEL=DEBUG uvicorn api.main:app
 ```
 
 ## Production Recommendations

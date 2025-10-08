@@ -125,7 +125,7 @@ pytest
 
 ### With Coverage
 ```bash
-pytest --cov=app --cov-report=html
+pytest --cov=api --cov-report=html
 ```
 
 ### By Test Type
@@ -154,12 +154,12 @@ pytest tests/integration/controllers/
 
 ### Specific File
 ```bash
-pytest tests/services/test_transcription_service.py -v
+pytest tests/unit/services/test_transcription_service.py -v
 ```
 
 ### Integration Tests Only
 ```bash
-pytest tests/test_integration.py -v
+pytest tests/integration/test_integration.py -v
 ```
 
 ### With Markers
@@ -173,21 +173,16 @@ pytest -m slow
 
 ## Test Implementation Status
 
-### ✅ Created (Structure)
-All test files have been created with:
-- Proper class organization
-- Test method stubs
-- Fixtures
-- TODO markers for implementation
+### ✅ Current Status
+- Unit and integration suites cover controllers, services, configuration, and schema validations.
+- Fixtures in `tests/conftest.py` centralize stubs for webrtcvad, FastAPI clients, and sample audio data.
+- Async behaviour is exercised via `pytest.mark.asyncio` across streaming and transcription paths.
 
-### 🔄 Next Steps
-1. Implement unit tests for services
-2. Implement integration tests for controllers
-3. Implement model validation tests
-4. Implement configuration tests
-5. Add test markers (slow, integration, unit)
-6. Configure coverage thresholds
-7. Add CI/CD test reporting
+### 🔄 Potential Enhancements
+1. Track coverage targets in CI (e.g., fail below agreed threshold).
+2. Introduce smoke tests for the CLI client once its interface stabilises.
+3. Add performance or regression markers for large-audio scenarios.
+4. Consider parametrizing integration tests by model size to mirror the UI selectors.
 
 ## Test Best Practices
 
@@ -217,7 +212,7 @@ def test_with_fixture(service):
 
 ### 3. Mock External Dependencies
 ```python
-@patch('app.services.audio_service.subprocess.run')
+@patch('api.services.audio_service.subprocess.run')
 def test_with_mock(mock_subprocess):
     # Test without calling real subprocess
     pass
@@ -259,6 +254,3 @@ Tests run automatically on:
 See `.github/workflows/ci.yml` for CI configuration.
 
 ---
-
-**Status**: 🟡 **Test Structure Created - Implementation Pending**  
-**Next**: Implement test logic for each test file

@@ -1,21 +1,28 @@
 import logging
+from typing import Any, TypedDict, cast
 
 import pytest
 
 from api.config.logging import configure_logging, get_logger
 
 
+class _LoggerState(TypedDict):
+    handlers: list[logging.Handler]
+    level: int
+    propagate: bool
+
+
 @pytest.fixture(autouse=True)
 def reset_logging():
     root = logging.getLogger()
     original_level = root.level
-    original_handlers = root.handlers[:]
+    original_handlers = list(root.handlers)
 
-    watched_loggers = {}
+    watched_loggers: dict[str, _LoggerState] = {}
     for name in ["uvicorn", "uvicorn.access", "uvicorn.error", "websockets.protocol", "websockets.server"]:
         logger = logging.getLogger(name)
         watched_loggers[name] = {
-            "handlers": logger.handlers[:],
+            "handlers": list(logger.handlers),
             "level": logger.level,
             "propagate": logger.propagate,
         }
@@ -29,9 +36,9 @@ def reset_logging():
 
     for name, state in watched_loggers.items():
         logger = logging.getLogger(name)
-        logger.handlers = state["handlers"]
-        logger.setLevel(state["level"])
-        logger.propagate = state["propagate"]
+        logger.handlers = list(state["handlers"])
+        logger.setLevel(int(state["level"]))
+        logger.propagate = bool(state["propagate"])
 
 
 def test_configure_logging_sets_level_and_handler():
@@ -62,7 +69,11 @@ def test_log_format_is_applied():
     configure_logging()
 
     root = logging.getLogger()
-    formatter = root.handlers[0].formatter
-
-    assert "%(levelname)" in formatter._style._fmt
-    assert "%(name)" in formatter._style._fmt
+    handler = root.handlers[0]
+    formatter = handler.formatter
+    assert formatter is not None
+    style = getattr(formatter, "_style", None)
+    assert style is not None
+    fmt = cast(str, getattr(style, "_fmt", ""))
+    assert "%(levelname)" in fmt
+    assert "%(name)" in fmt

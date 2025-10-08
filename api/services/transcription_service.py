@@ -3,10 +3,14 @@ Transcription Service - Business logic for audio transcription.
 """
 
 import os
+import subprocess
 import tempfile
 import urllib.request
+from pathlib import Path
 from typing import Optional
+
 from fastapi import HTTPException, UploadFile
+from urllib.parse import urlparse
 
 from api.config.settings import settings
 from api.services.audio_service import normalize_to_wav_16k_mono
@@ -20,6 +24,8 @@ logger = get_logger("service.transcription")
 
 class TranscriptionService:
     """Service for handling audio transcription business logic."""
+
+    SUPPORTED_UPLOAD_FORMATS = {"wav", "mp3", "m4a", "ogg", "webm", "flac"}
     
     def __init__(self, transcriber: Transcriber):
         self.transcriber = transcriber
@@ -55,7 +61,7 @@ class TranscriptionService:
         
         with open(dest_path, "wb") as f:
             f.write(content)
-        
+
         return size_bytes
     
     def download_url_to_file(self, url: str, dest_path: str) -> int:
@@ -115,6 +121,7 @@ class TranscriptionService:
         try:
             wav_path, duration = normalize_to_wav_16k_mono(input_path)
         except Exception as e:
+            logger.error("Audio decode/normalize failed for %s: %s", input_path, e, exc_info=True)
             raise HTTPException(
                 status_code=422, 
                 detail=f"Audio decode/normalize failed: {e}"
@@ -124,6 +131,73 @@ class TranscriptionService:
         logger.debug(f"Audio normalized: duration={duration:.2f}s")
         
         return wav_path, duration
+
+    def validate_audio_format(self, path: str, original_name: Optional[str] = None) -> str:
+        """Ensure the uploaded audio format is supported."""
+        format_candidates = self._probe_audio_format(path)
+        for candidate in format_candidates:
+            normalized = self._map_probe_name(candidate)
+            if normalized in self.SUPPORTED_UPLOAD_FORMATS:
+                logger.debug("Detected audio format '%s' for %s", normalized, path)
+                return normalized
+
+        # Try filename-based fallbacks if probe failed
+        ext_for_log = ""
+        for hint in (path, original_name):
+            ext = self._extract_extension(hint)
+            if ext:
+                ext_for_log = ext
+            if ext and ext in self.SUPPORTED_UPLOAD_FORMATS:
+                logger.debug("Fallback to filename extension format '%s' for %s (hint=%s)", ext, path, hint)
+                return ext
+
+        supported = ", ".join(sorted(self.SUPPORTED_UPLOAD_FORMATS))
+        detail = f"Unsupported audio format. Supported formats: {supported}."
+        logger.warning("Unsupported audio format for %s (candidates=%s, ext=%s)", path, format_candidates, ext_for_log)
+        raise HTTPException(status_code=400, detail=detail)
+
+    @staticmethod
+    def _map_probe_name(name: str) -> str:
+        candidate = name.strip().lower()
+        if not candidate:
+            return ""
+        # Common aliases reported by ffprobe for m4a and webm containers
+        if candidate in {"mov", "mp4", "m4a"}:
+            return "m4a"
+        if candidate in {"matroska"}:
+            return "webm"
+        return candidate
+
+    @staticmethod
+    def _probe_audio_format(path: str) -> list[str]:
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=format_name",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            logger.warning("ffprobe failed while detecting format for %s: %s", path, exc)
+            return []
+
+        output = proc.stdout.strip()
+        if not output:
+            return []
+        return [segment.strip().lower() for segment in output.split(",") if segment.strip()]
+
+    @staticmethod
+    def _extract_extension(name: Optional[str]) -> str:
+        if not name:
+            return ""
+        cleaned = str(name).split("?", 1)[0].split("#", 1)[0]
+        suffix = Path(cleaned).suffix.lower().lstrip(".")
+        return suffix
     
     def resolve_transcription_params(
         self,
@@ -178,6 +252,7 @@ class TranscriptionService:
         
         try:
             await self.save_uploaded_file(file, tmp_path)
+            self.validate_audio_format(tmp_path, getattr(file, "filename", None))
             wav_path, duration = self.normalize_and_validate_audio(tmp_path)
             lang, msize, wt = self.resolve_transcription_params(language, model_size, word_timestamps, None)
             
@@ -211,6 +286,9 @@ class TranscriptionService:
         
         try:
             self.download_url_to_file(str(req.url), tmp_path)
+            parsed = urlparse(str(req.url))
+            original_name = Path(parsed.path).name or None
+            self.validate_audio_format(tmp_path, original_name)
             wav_path, duration = self.normalize_and_validate_audio(tmp_path)
             lang, msize, wt = self.resolve_transcription_params(language, model_size, word_timestamps, req)
             

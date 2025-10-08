@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 from api.main import app, app_lifespan
@@ -5,7 +7,7 @@ from api.main import app, app_lifespan
 
 @pytest.mark.asyncio
 async def test_app_lifespan_runs_logging(monkeypatch):
-    captured = {"messages": []}
+    captured: dict[str, Any] = {"messages": []}
 
     def fake_configure_logging():
         captured["configured"] = True

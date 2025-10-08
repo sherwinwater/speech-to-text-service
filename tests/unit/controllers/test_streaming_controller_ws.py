@@ -1,5 +1,6 @@
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
@@ -11,10 +12,10 @@ class StubWebSocket:
     def __init__(self, messages, close_exception: Exception | None = None):
         self.messages = list(messages)
         self.accepted = False
-        self.sent = []
-        self.closed = None
+        self.sent: list[Any] = []
+        self.closed: tuple[int, str] | None = None
         self.close_exception = close_exception
-        self.query_params = {}
+        self.query_params: dict[str, str] = {}
 
     async def accept(self):
         self.accepted = True
@@ -51,6 +52,7 @@ class StubWebSocket:
 class StubSession:
     def __init__(self):
         self.cleaned = False
+        self.model_size_override: str | None = None
 
     async def cleanup(self):
         self.cleaned = True
@@ -178,6 +180,21 @@ async def test_stub_websocket_send_json_and_close():
     await ws.close(1000, "done")
     assert ws.sent == [{"ok": True}]
     assert ws.closed == (1000, "done")
+
+
+@pytest.mark.asyncio
+async def test_ws_transcribe_truncates_long_close_reason():
+    long_reason = "unsupported:" + ("a" * 200)
+
+    class FailingService:
+        def parse_handshake(self, message, fallback_model_size=None):
+            raise ValueError(long_reason)
+
+    websocket = StubWebSocket(['{"type": "start"}'])
+
+    await streaming_controller.ws_transcribe(websocket, service=FailingService())
+
+    assert websocket.closed == (1003, long_reason[:117] + "...")
 
 
 @pytest.mark.asyncio

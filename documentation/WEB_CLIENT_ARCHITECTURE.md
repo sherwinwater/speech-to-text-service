@@ -9,20 +9,20 @@ The web client has been refactored to follow clean architecture principles with 
 ```
 client/web/
 ├── index.html                  # HTML entry point
-├── index-old.html              # Backup
-├── README.md                   # Documentation
+├── README.md                   # Usage notes for the demo client
 │
 ├── css/                        # Presentation Layer
 │   └── styles.css              # All styling
 │
 └── js/                         # JavaScript Layer
-    ├── app.js                  # Application entry point
+    ├── app.js                  # Application bootstrap
     │
     ├── config/                 # Configuration Layer
-    │   └── config.js           # API endpoints, settings
+    │   └── config.js           # API endpoints, helpers
     │
     ├── components/             # UI Components Layer
-    │   └── tabs.js             # Tab switching component
+    │   ├── tabs.js             # Tab switching logic
+    │   └── modelSelector.js    # Shared model-size picker utilities
     │
     └── services/               # Business Logic Layer
         ├── upload.js           # File upload service
@@ -61,7 +61,16 @@ client/web/
 ```javascript
 export const API_BASE = '';
 export const POST_URL = `${API_BASE}/transcribe`;
-export const WS_URL = `ws://${location.host}/ws/transcribe`;
+const WS_PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
+export const WS_URL = `${WS_PROTOCOL}://${window.location.host}/ws/transcribe`;
+
+export function withModelSize(url, modelSize) {
+    const resolved = new URL(url, window.location.origin);
+    if (modelSize) {
+        resolved.searchParams.set('model_size', modelSize);
+    }
+    return resolved.toString();
+}
 ```
 
 ---
@@ -71,6 +80,7 @@ export const WS_URL = `ws://${location.host}/ws/transcribe`;
 
 **Files**:
 - `tabs.js` - Tab switching logic
+- `modelSelector.js` - Shared helpers (`initModelSelectors`, `getModelSize`) for model selection state
 
 **Responsibilities**:
 - DOM manipulation
@@ -84,6 +94,10 @@ export function initTabs() {
     // Handle tab switching
     // Manage active states
     // Show/hide panels
+}
+
+export function initModelSelectors() {
+    // Wire up shared model-size buttons across upload/record/live panels
 }
 ```
 
@@ -436,7 +450,3 @@ test('upload flow works', () => {
 - Professional structure
 
 ---
-
-**Status**: 🟢 **WEB CLIENT REFACTORED**  
-**Pattern**: Layered Frontend Architecture  
-**Quality**: 🌟 **PRODUCTION-READY**

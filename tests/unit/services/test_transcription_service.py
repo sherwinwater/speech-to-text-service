@@ -6,6 +6,7 @@ from fastapi import HTTPException, UploadFile
 from api.services.transcription_service import TranscriptionService
 from api.services.transcriber_service import FakeTranscriber
 from api.models.schemas import UrlRequest
+from api.config.settings import settings
 
 
 @pytest.fixture
@@ -26,8 +27,9 @@ class TestTranscriptionService:
         service.validate_file_size(5 * 1024 * 1024)
 
     def test_validate_file_size_too_large(self, service):
+        oversized = (settings.max_file_mb + 10) * 1024 * 1024
         with pytest.raises(HTTPException) as exc:
-            service.validate_file_size(100 * 1024 * 1024)
+            service.validate_file_size(oversized)
 
         assert exc.value.status_code == 413
         assert "File too large" in exc.value.detail
@@ -101,6 +103,73 @@ class TestTranscriptionService:
 
         assert exc.value.status_code == 422
 
+    def test_validate_audio_format_supported_probe(self, service, tmp_path, monkeypatch):
+        dummy = tmp_path / "clip.bin"
+        dummy.write_bytes(b"audio")
+        monkeypatch.setattr(TranscriptionService, "_probe_audio_format", lambda self, path: ["mp3"])
+
+        fmt = service.validate_audio_format(str(dummy), "clip.mp3")
+
+        assert fmt == "mp3"
+
+    def test_validate_audio_format_alias(self, service, tmp_path, monkeypatch):
+        dummy = tmp_path / "clip.bin"
+        dummy.write_bytes(b"audio")
+        monkeypatch.setattr(TranscriptionService, "_probe_audio_format", lambda self, path: ["mov", "mp4"])
+
+        fmt = service.validate_audio_format(str(dummy), "clip.m4a")
+
+        assert fmt == "m4a"
+
+    def test_validate_audio_format_extension_fallback(self, service, tmp_path, monkeypatch):
+        dummy = tmp_path / "clip.wav"
+        dummy.write_bytes(b"audio")
+        monkeypatch.setattr(TranscriptionService, "_probe_audio_format", lambda self, path: [])
+
+        fmt = service.validate_audio_format(str(dummy))
+
+        assert fmt == "wav"
+
+    def test_validate_audio_format_original_name_fallback(self, service, tmp_path, monkeypatch):
+        dummy = tmp_path / "clip"
+        dummy.write_bytes(b"audio")
+        monkeypatch.setattr(TranscriptionService, "_probe_audio_format", lambda self, path: [])
+
+        fmt = service.validate_audio_format(str(dummy), "clip.webm")
+
+        assert fmt == "webm"
+
+    def test_validate_audio_format_unsupported(self, service, tmp_path, monkeypatch):
+        dummy = tmp_path / "clip.bin"
+        dummy.write_bytes(b"audio")
+        monkeypatch.setattr(TranscriptionService, "_probe_audio_format", lambda self, path: [])
+
+        with pytest.raises(HTTPException) as exc:
+            service.validate_audio_format(str(dummy))
+
+        assert exc.value.status_code == 400
+        assert "Supported formats" in exc.value.detail
+
+    def test_map_probe_name_blank(self):
+        assert TranscriptionService._map_probe_name("   ") == ""
+
+    def test_map_probe_name_matroska(self):
+        assert TranscriptionService._map_probe_name("matroska") == "webm"
+
+    def test_probe_audio_format_empty_output(self, tmp_path, monkeypatch):
+        dummy = tmp_path / "clip.bin"
+        dummy.write_bytes(b"audio")
+
+        class Proc:
+            def __init__(self):
+                self.stdout = ""
+
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: Proc())
+
+        formats = TranscriptionService._probe_audio_format(str(dummy))
+
+        assert formats == []
+
     def test_cleanup_temp_file_swallows_errors(self, service, monkeypatch):
         called = {}
 
@@ -132,8 +201,9 @@ class TestTranscriptionService:
 
     @pytest.mark.asyncio
     @patch("api.services.transcription_service.normalize_to_wav_16k_mono")
-    async def test_transcribe_from_file(self, mock_normalize, service, mock_upload_file):
+    async def test_transcribe_from_file(self, mock_normalize, service, mock_upload_file, monkeypatch):
         mock_normalize.return_value = ("/tmp/out.wav", 2.0)
+        monkeypatch.setattr(TranscriptionService, "validate_audio_format", lambda self, path, original_name=None: "wav")
 
         result = await service.transcribe_from_file(mock_upload_file)
 
@@ -143,13 +213,14 @@ class TestTranscriptionService:
     @pytest.mark.asyncio
     @patch("api.services.transcription_service.normalize_to_wav_16k_mono")
     @patch("api.services.transcription_service.urllib.request.urlopen")
-    async def test_transcribe_from_url(self, mock_urlopen, mock_normalize, service):
+    async def test_transcribe_from_url(self, mock_urlopen, mock_normalize, service, monkeypatch):
         response = MagicMock()
         response.read.return_value = b"remote"
         response.__enter__.return_value = response
         response.__exit__.return_value = None
         mock_urlopen.return_value = response
         mock_normalize.return_value = ("/tmp/out.wav", 3.0)
+        monkeypatch.setattr(TranscriptionService, "validate_audio_format", lambda self, path, original_name=None: "mp3")
 
         req = UrlRequest(url="https://example.com/audio.mp3")
         result = await service.transcribe_from_url(req)

@@ -76,15 +76,149 @@ docker compose --profile prod --env-file .env.prod up -d
 
 ## Deployment
 
-Deployments are managed by GitHub Actions, but you can promote manually when needed:
+Deployments are managed by GitHub Actions, but you can also promote manually or bootstrap a fresh cloud host with the following workflow.
+
+### 1. Provision a Host
+
+- Spin up an Ubuntu 22.04+ VM (e.g., AWS EC2, DigitalOcean Droplet, GCP Compute Engine).
+- Open inbound ports `80/443` (proxy) and `8000` (direct FastAPI) as needed.
+- Add your SSH key so the CI workflow can log in.
+
+### 2. Install Runtime Dependencies
 
 ```bash
-cd /home/ubuntu/swang/apps/speech-to-text-service
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### 3. Prepare Deployment Directory
+
+```bash
+sudo mkdir -p /home/ubuntu/swang/apps
+sudo chown -R $USER:$USER /home/ubuntu/swang/apps
+cd /home/ubuntu/swang/apps
+git clone https://github.com/sherwinwater/speech-to-text-service.git
+cd speech-to-text-service
+```
+
+- Copy the production environment file (`.env.prod`) or create one based on `.env.template`.
+- Store the file in the repo root (ignored by git).
+
+### 4. Authenticate to the Registry (first-time only)
+
+```bash
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GH_USERNAME --password-stdin
+```
+
+The token needs `read:packages` scope to pull published images.
+
+### 5. Deploy / Promote Manually
+
+```bash
 docker compose --profile prod pull
 docker compose --profile prod up -d --remove-orphans
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint/type-check/tests, builds the Docker image, and pushes tags `:qa` (from the `qa` branch) and `:latest` (from `main`). The deploy workflow SSHs to the target host, pulls the requested tag, and restarts the compose stack. Required secrets: `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`, `DEPLOY_PATH`.
+To roll back, re-run the commands with a pinned tag (e.g., `ghcr.io/sherwinwater/stt-service:qa`) in `docker-compose.yml` or via an override file.
+
+### 6. CI/CD Automation
+
+CI (`.github/workflows/ci.yml`) runs lint/type-check/tests, builds the Docker image, and pushes tags `:qa` (from the `qa` branch) and `:latest` (from `main`). The deploy workflow SSHs to the target host, pulls the requested tag, and restarts the compose stack. Required GitHub Actions secrets: `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`, `DEPLOY_PATH`, plus `GHCR_PAT` (registry token) if different from the GitHub-provided token.
+
+### 7. Post-Deployment Checks
+
+```bash
+docker compose --profile prod ps
+curl http://<public-host>:8000/health
+journalctl -u docker -f   # optional: tail system logs
+```
+
+### HTTPS / WebSocket Reverse Proxy (Nginx + Let's Encrypt)
+
+Set up edge termination so browsers can connect over HTTPS and WebSockets.
+
+#### 0. Prerequisites
+
+- **DNS**: Create an A record `stt.shuwen.cloud` → your EC2 (or other cloud VM) public IPv4.
+- **Security Group / Firewall**: Allow inbound TCP `80` (HTTP) and `443` (HTTPS).
+- **Backend Reachability**: Confirm the app is listening locally:
+
+  ```bash
+  curl -I http://127.0.0.1:8000/health
+  ```
+
+  If this fails, ensure the container publishes the port (e.g., `ports: ["127.0.0.1:8000:8000"]`) and the FastAPI app binds to `0.0.0.0:8000`.
+
+#### 1. Install Nginx (Ubuntu)
+
+```bash
+sudo apt-get update -y
+sudo apt-get install -y nginx
+nginx -v
+sudo systemctl status nginx --no-pager
+```
+
+#### 2. Create HTTP Reverse Proxy (no TLS yet)
+
+```bash
+sudo bash -c 'cat >/etc/nginx/sites-available/stt.shuwen.cloud.conf << "CONF"
+server {
+    listen 80;
+    server_name stt.shuwen.cloud;
+    client_max_body_size 100m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+    }
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+}
+CONF'
+sudo ln -sf /etc/nginx/sites-available/stt.shuwen.cloud.conf /etc/nginx/sites-enabled/stt.shuwen.cloud.conf
+sudo nginx -t
+sudo systemctl reload nginx
+curl -I http://stt.shuwen.cloud/health
+```
+
+#### 3. Install Certbot
+
+```bash
+sudo snap install core && sudo snap refresh core
+sudo snap install --classic certbot
+sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+```
+
+#### 4. Obtain and Install TLS Certificate
+
+```bash
+sudo certbot --nginx -d stt.shuwen.cloud --non-interactive --agree-tos -m admin@stt.shuwen.cloud
+curl -I https://stt.shuwen.cloud/health
+```
 
 ## Example Usage
 
@@ -98,6 +232,13 @@ curl http://localhost:8000/health
 curl -X POST http://localhost:8000/transcribe \
   -F "file=@samples/hello.m4a" | jq
 ```
+
+## Supported Audio Formats & Limits
+
+- Upload formats: `wav`, `mp3`, `m4a`, `ogg`, `webm`, `flac`
+- File size limit: 100 MB per request (`MAX_FILE_MB`)
+- Duration limit: 3,600 seconds per request (`MAX_DURATION_SEC`)
+- Live streaming accepts the same container formats plus raw `s16le`/`f32le` PCM
 
 Additional helpers:
 - `bash scripts/call_local.sh` transcribes `samples/hello.m4a`.
@@ -130,4 +271,4 @@ speech-to-text-service/
 - Caching uses the local filesystem via `~/.cache/whisper`. Consider adding Redis/S3-backed caching if you operate multiple replicas.
 - Authentication/authorization is not implemented; the next iteration could add API keys.
 - Observability is basic (logging only). With more time, integrate OpenTelemetry traces and metrics exporters for production monitoring.
-- Currently it only supports 100MB audio file and 1 hour length audio; the next will be use blob storage like S3 to storage large audio file instead of in memory storage.
+- Currently uploads are limited to 100 MB and one hour per request; moving large audio to blob storage (e.g. S3) would relax those limits.

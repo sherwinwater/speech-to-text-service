@@ -2,6 +2,7 @@ import pytest
 
 from api.controllers import streaming_controller, transcription_controller
 from api.models.schemas import TranscribeResponse, UrlRequest
+from api.services.transcriber_service import FakeTranscriber
 
 
 def test_streaming_get_transcriber(monkeypatch):
@@ -22,7 +23,7 @@ def test_streaming_get_transcriber(monkeypatch):
 
 
 def test_streaming_get_service(monkeypatch):
-    dummy_transcriber = object()
+    dummy_transcriber = FakeTranscriber()
     created = {}
 
     class DummyService:
@@ -57,7 +58,7 @@ def test_transcription_get_transcriber(monkeypatch):
 
 
 def test_transcription_get_service(monkeypatch):
-    dummy_transcriber = object()
+    dummy_transcriber = FakeTranscriber()
     created = {}
 
     class DummyService:
@@ -104,4 +105,5 @@ async def test_transcribe_routes_to_url():
     )
 
     assert result.text == "hello"
+    assert service.called is not None
     assert service.called[0] == req

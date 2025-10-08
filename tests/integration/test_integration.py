@@ -26,6 +26,7 @@ class _StubSession:
     def __init__(self, audio_format: _StubAudioFormat):
         self.audio_format = audio_format
         self.cleanup_called = False
+        self.model_size_override: Optional[str] = None
 
     async def start_ffmpeg_decoder(self):
         self.audio_format.convert = True
@@ -139,6 +140,7 @@ class TestWebSocketFlow:
                     final = ws.receive_json()
 
             assert final == {"type": "final"}
+            assert service.session is not None
             assert service.session.cleanup_called is True
         finally:
             app.dependency_overrides.pop(get_streaming_service, None)

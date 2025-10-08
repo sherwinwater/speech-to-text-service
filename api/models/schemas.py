@@ -2,15 +2,20 @@
 from typing import List, Optional
 
 try:
-    from pydantic import BaseModel, HttpUrl, Field, ConfigDict  # Pydantic v2
+    from pydantic import BaseModel, Field, HttpUrl, ConfigDict  # Pydantic v2
 except ImportError:
-    from pydantic import BaseModel, HttpUrl, Field  # type: ignore
-    ConfigDict = None  # type: ignore
+    from pydantic import BaseModel, Field, HttpUrl  # type: ignore
+    ConfigDict = None  # type: ignore[assignment]
+    _CONFIG_DICT_AVAILABLE = False
+else:
+    _CONFIG_DICT_AVAILABLE = True
+
 
 class Segment(BaseModel):
     start: float
     end: float
     text: str
+
 
 class TranscribeResponse(BaseModel):
     text: str
@@ -19,8 +24,9 @@ class TranscribeResponse(BaseModel):
     segments: List[Segment] = Field(default_factory=list)
     model: str
 
+
 class UrlRequest(BaseModel):
-    if ConfigDict:
+    if _CONFIG_DICT_AVAILABLE:
         model_config = ConfigDict(protected_namespaces=())
     else:
         class Config:  # type: ignore[no-redef]

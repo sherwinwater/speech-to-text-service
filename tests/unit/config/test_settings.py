@@ -1,6 +1,7 @@
 import importlib
 import sys
 import types
+from typing import Any, cast
 
 import pytest
 
@@ -12,7 +13,7 @@ def test_default_values():
 
     assert settings.model_size == "small"
     assert settings.compute_type == "int8"
-    assert settings.max_file_mb == 30
+    assert settings.max_file_mb == 100
     assert settings.max_duration_sec == 3600
     assert settings.host == "0.0.0.0"
     assert settings.port == 8000
@@ -52,7 +53,7 @@ def test_numeric_environment_coercion(monkeypatch):
 
 
 def test_base_settings_fallback(monkeypatch):
-    fake_pydantic = types.ModuleType("pydantic")
+    fake_pydantic = cast(Any, types.ModuleType("pydantic"))
 
     class FakeBaseSettings:  # pragma: no cover - simple stub container
         pass
