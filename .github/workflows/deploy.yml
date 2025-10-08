@@ -29,41 +29,43 @@ jobs:
           script: |
             set -euo pipefail
 
-            # Resolve deploy path with safe fallback and ~ expansion
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
             DEPLOY_PATH="${DEPLOY_PATH:-$HOME/speech-to-text-service}"
+            CONTAINER_NAME="speech-to-text-service"
+            IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+            IMAGE_BASE="${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}"
+
+            # Use the triggering CI SHA if present, else this workflow's SHA
+            IMAGE_TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
+            IMAGE_REF="${IMAGE_BASE}:prod-${IMAGE_TAG}"
+
+            echo "[info] Deploying $IMAGE_REF"
             cd "$DEPLOY_PATH"
 
-            # Determine the image tag to deploy:
-            # - for workflow_run: use head_sha of the CI workflow that triggered this
-            # - for manual dispatch: fall back to this workflow's commit sha
-            IMAGE_TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
-            echo "[info] Deploying image tag: ${IMAGE_TAG}"
-
-            # Optional: keep local checkout fresh if you also build on the server
-            if [ -d .git ]; then
-              git fetch origin main
-              git reset --hard origin/main
+            # Pull immutable tag; if not found yet, fall back to :prod
+            if ! sudo docker pull "$IMAGE_REF"; then
+              echo "[warn] $IMAGE_REF not found, falling back to ${IMAGE_BASE}:prod"
+              IMAGE_REF="${IMAGE_BASE}:prod"
+              sudo docker pull "$IMAGE_REF"
             fi
 
-            # Ensure .env contains IMAGE_TAG=<sha> (compose auto-loads .env)
-            touch .env
-            if grep -q '^IMAGE_TAG=' .env; then
-              sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env
-            else
-              echo "IMAGE_TAG=${IMAGE_TAG}" >> .env
+            # Stop & remove old container if present
+            if sudo docker ps -a --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}$"; then
+              sudo docker stop "$CONTAINER_NAME" || true
+              sudo docker rm "$CONTAINER_NAME" || true
             fi
 
-            # Pull and restart using the prod profile; image is public, no login required
-            if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-              sudo docker compose --profile prod pull
-              sudo docker compose --profile prod up -d --remove-orphans
-              sudo docker compose --profile prod ps
-            else
-              sudo docker-compose --profile prod pull
-              sudo docker-compose --profile prod up -d --remove-orphans
-              sudo docker-compose --profile prod ps
-            fi
+            # (Optional) persist model cache
+            mkdir -p "$DEPLOY_PATH/models"
 
-            sudo docker image prune -af
-            echo "Deployment completed successfully!"
+            # Run new container — simple: only APP_ENV=prod, no env-file
+            sudo docker run -d \
+              --name "$CONTAINER_NAME" \
+              --restart unless-stopped \
+              -p 8000:8000 \
+              -e APP_ENV=prod \
+              -v "$(pwd)/models:/root/.cache/whisper" \
+              "$IMAGE_REF"
+
+            sudo docker ps --filter "name=$CONTAINER_NAME"
+            echo "[ok] deployed"
