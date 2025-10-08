@@ -13,7 +13,7 @@ The application follows a clean layered architecture pattern for better separati
                        │
 ┌──────────────────────▼──────────────────────────────────┐
 │                 CONTROLLER LAYER                        │
-│  (app/controllers/transcription_controller.py)          │
+│  (api/controllers/transcription_controller.py)          │
 │  - HTTP endpoint handlers                               │
 │  - Request validation                                   │
 │  - Response formatting                                  │
@@ -22,7 +22,7 @@ The application follows a clean layered architecture pattern for better separati
                        │
 ┌──────────────────────▼──────────────────────────────────┐
 │                  SERVICE LAYER                          │
-│  (app/services/transcription_service.py)                │
+│  (api/services/transcription_service.py)                │
 │  - Business logic                                       │
 │  - Orchestration                                        │
 │  - Validation rules                                     │
@@ -30,8 +30,8 @@ The application follows a clean layered architecture pattern for better separati
 └──────────────────────┬──────────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────────┐
-│                   MODEL LAYER                           │
-│  (app/transcribe.py, app/audio.py)                      │
+│            MODELS & SUPPORTING MODULES                  │
+│  (api/models/schemas.py, api/services/{audio,transcriber}_service.py) │
 │  - Domain models                                        │
 │  - Data transformation                                  │
 │  - External integrations (Whisper, FFmpeg)              │
@@ -41,7 +41,7 @@ The application follows a clean layered architecture pattern for better separati
 ## Directory Structure
 
 ```
-app/
+api/
 ├── main.py                          # Application entry point
 ├── controllers/                     # Controller layer
 │   ├── __init__.py
@@ -51,11 +51,14 @@ app/
 │   ├── __init__.py
 │   ├── transcription_service.py     # Transcription business logic
 │   ├── streaming_service.py         # Streaming business logic
-│   ├── audio_service.py             # Audio processing service
+│   ├── audio_service.py             # Audio processing helpers
 │   └── transcriber_service.py       # Transcriber implementations
-├── schemas.py                       # Data models
-├── deps.py                          # Dependencies & configuration
-└── logging_config.py                # Logging configuration
+├── models/                          # Pydantic schemas & DTOs
+│   └── schemas.py
+└── config/                          # Settings & logging
+    ├── __init__.py
+    ├── logging.py
+    └── settings.py
 ```
 
 ## Layer Responsibilities
@@ -124,24 +127,29 @@ class TranscriptionService:
 - Easy to test (no HTTP dependencies)
 - Clear business flow
 
-### 3. Model Layer (`transcribe.py`, `audio.py`)
+### 3. Models & Supporting Modules (`models/`, `services/audio_service.py`, `services/transcriber_service.py`)
 
-**Purpose**: Domain models and data operations
+**Purpose**: Domain data structures and low-level integrations
 
 **Responsibilities**:
-- Define domain entities
-- Data transformation
-- External system integration
-- Low-level operations
+- Define API contracts via Pydantic schemas (`api/models/schemas.py`)
+- Provide audio normalization utilities (`api/services/audio_service.py`)
+- Wrap whisper model access (`api/services/transcriber_service.py`)
+- Abstract external processes (ffmpeg, faster-whisper)
 
 **Example**:
 ```python
-class FasterWhisperTranscriber:
-    def transcribe(self, audio_path, language, model_size):
-        # Low-level transcription logic
-        model = WhisperModel(model_size)
-        segments, info = model.transcribe(audio_path, language=language)
-        return TranscriptionResult(...)
+class FasterWhisperTranscriber(Transcriber):
+    def _get_model(self, size: str):
+        return self.WhisperModel(size, compute_type=self.compute_type)
+
+    def transcribe(self, wav_path: str, language: str | None, model_size: str, word_timestamps: bool):
+        segments, info = self._get_model(model_size).transcribe(
+            wav_path,
+            language=language,
+            word_timestamps=word_timestamps,
+        )
+        return TranscriptResult(...)
 ```
 
 **Benefits**:
@@ -323,7 +331,3 @@ class TranscriptionService:
 - **Domain Events**: For async processing
 
 ---
-
-**Status**: ✅ Implemented
-**Pattern**: Controller-Service-Model
-**Principles**: SOLID, Clean Architecture

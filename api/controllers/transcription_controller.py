@@ -57,8 +57,8 @@ async def transcribe(
             detail="Provide either multipart file or JSON {url}."
         )
     
-    # Route to appropriate service method
     if file:
         return await service.transcribe_from_file(file, language, model_size, word_timestamps)
     else:
+        assert req is not None, "req must be provided when file is not"
         return await service.transcribe_from_url(req, language, model_size, word_timestamps)

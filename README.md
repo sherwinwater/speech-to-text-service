@@ -1,101 +1,223 @@
-
 # STT Service (Open-Source Speech-to-Text)
 
-[![CI](https://github.com/YOUR_USERNAME/speech-to-text-service/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/speech-to-text-service/actions/workflows/ci.yml)
-[![Deploy](https://github.com/YOUR_USERNAME/speech-to-text-service/actions/workflows/deploy.yml/badge.svg)](https://github.com/YOUR_USERNAME/speech-to-text-service/actions/workflows/deploy.yml)
+[![CI](https://github.com/sherwinwater/speech-to-text-service/actions/workflows/ci.yml/badge.svg)](https://github.com/sherwinwater/speech-to-text-service/actions/workflows/ci.yml)
+[![Deploy](https://github.com/sherwinwater/speech-to-text-service/actions/workflows/deploy.yml/badge.svg)](https://github.com/sherwinwater/speech-to-text-service/actions/workflows/deploy.yml)
 
-A minimal FastAPI + `faster-whisper` microservice that accepts audio, normalizes via FFmpeg,
-transcribes, and returns JSON.
+A production-ready FastAPI + `faster-whisper` service that ingests audio from uploads or URLs, normalizes it with FFmpeg, runs transcription, and returns structured JSON that powers both API clients and the bundled web UI.
 
 ## Architecture Overview
 
-A production-ready speech-to-text service built with **clean architecture** principles:
-- **Layered design**: Controllers (HTTP/WebSocket) → Services (business logic) → Models (data)
-- **FastAPI** with `/health`, `/transcribe` (HTTP), and `/ws/transcribe` (WebSocket streaming)
-- **Audio pipeline**: Upload/URL → FFmpeg normalization (16kHz mono WAV) → faster-whisper → JSON response
-- **Real-time streaming**: WebSocket with VAD-based segmentation for live transcription
-- **Containerized**: Docker with model caching, CI/CD via GitHub Actions
+The system follows a clean architecture split into controllers (REST/WebSocket) under `api/controllers`, domain services in `api/services`, and adapters for audio/model handling. Requests enter FastAPI, audio is normalized to 16 kHz mono WAV through FFmpeg, and transcripts are generated via Faster Whisper with optional streaming through `/ws/transcribe`. Docker images wrap the app with model caching, and CI/CD pipelines publish GHCR images (`:dev`, `:qa`, `:latest`) that the compose profiles consume. See `documentation/ARCHITECTURE.md` for diagrams and deeper detail.
 
-See [documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md) for detailed architecture.
+## Local Development
 
-## Prerequisites
+### Prerequisites
 - Python 3.10+
-- FFmpeg (required for audio processing)
-- Docker (for containerized run)
-- (Optional) NVIDIA CUDA if you want GPU inference
+- FFmpeg (required for preprocessing)
+- Docker + Docker Compose v2 (for container workflows)
+- (Optional) NVIDIA CUDA if you plan to run GPU inference
 
-### Install FFmpeg
+#### Install FFmpeg
 
-#### MacOS
+macOS:
 ```bash
 brew install ffmpeg
 ```
 
-#### Linux (Debian/Ubuntu)
+Ubuntu/Debian:
 ```bash
 sudo apt-get update
 sudo apt-get install -y ffmpeg
-ffmpeg -version  # Verify installation
+ffmpeg -version
 ```
 
-## Quick Start
-
-### 1. Clone & Install
+### Setup
 ```bash
 git clone https://github.com/sherwinwater/speech-to-text-service.git
 cd speech-to-text-service
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-### 2. Configure Environment
+### Start the Service Locally
 ```bash
-cp .env.example .env
-# Edit .env if needed (defaults work fine)
-```
-
-### 3. Start the Service
-```bash
-# Development mode (with auto-reload)
+# FastAPI with auto-reload
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Production mode
-uvicorn api.main:app --host 0.0.0.0 --port 8000
+# Or run the stack in containers (rebuilds backend + web client)
+docker compose --profile dev up --build
 ```
 
-### 4. Verify Installation
-```bash
-# Health check
-curl http://localhost:8000/health
-
-# Test transcription
-curl -X POST http://localhost:8000/transcribe \
-  -F "file=@samples/hello.m4a"
-
-# Open web interface
-open http://localhost:8000/web
-```
-
-## Configuration
-
-Environment variables (`.env`):
-- `MODEL_SIZE` (default: `small`) - Options: tiny, base, small, medium, large
-- `COMPUTE_TYPE` (default: `int8`) - CPU: int8, GPU: float16
-- `MAX_FILE_MB` (default: `30`) - Maximum file size
-- `MAX_DURATION_SEC` (default: `600`) - Maximum audio duration
+Open `http://localhost:8000/web` for the front-end playground. The API root lives at `http://localhost:8000`.
 
 ## Running Tests
 
 ```bash
-# Run all tests
-pytest -v
+pytest --cov=api --cov=tests --cov-report=term-missing
+```
 
-# With coverage
-pytest --cov=api
+## Docker Compose Profiles
 
-# Specific test file
-pytest tests/test_transcribe_ok.py -v
+Compose profiles map 1:1 to environments and reuse the single `docker-compose.yml`:
+
+```bash
+# Development (build locally)
+docker compose --profile dev --env-file .env.dev up -d
+
+# QA (pull image :qa)
+docker compose --profile qa --env-file .env.qa up -d
+
+# Production (pull image :latest)
+docker compose --profile prod --env-file .env.prod up -d
+```
+
+`dev` builds from source so you can iterate quickly. `qa` and `prod` pull the prebuilt images published to GHCR by the CI workflow.
+
+## Deployment
+
+Deployments are managed by GitHub Actions, but you can also promote manually or bootstrap a fresh cloud host with the following workflow.
+
+### 1. Provision a Host
+
+- Spin up an Ubuntu 22.04+ VM (e.g., AWS EC2, DigitalOcean Droplet, GCP Compute Engine).
+- Open inbound ports `80/443` (proxy) and `8000` (direct FastAPI) as needed.
+- Add your SSH key so the CI workflow can log in.
+
+### 2. Install Runtime Dependencies
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### 3. Prepare Deployment Directory
+
+```bash
+sudo mkdir -p /home/ubuntu/swang/apps
+sudo chown -R $USER:$USER /home/ubuntu/swang/apps
+cd /home/ubuntu/swang/apps
+git clone https://github.com/sherwinwater/speech-to-text-service.git
+cd speech-to-text-service
+```
+
+- Copy the production environment file (`.env.prod`) or create one based on `.env.template`.
+- Store the file in the repo root (ignored by git).
+
+### 4. Authenticate to the Registry (first-time only)
+
+```bash
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GH_USERNAME --password-stdin
+```
+
+The token needs `read:packages` scope to pull published images.
+
+### 5. Deploy / Promote Manually
+
+```bash
+docker compose --profile prod pull
+docker compose --profile prod up -d --remove-orphans
+```
+
+To roll back, re-run the commands with a pinned tag (e.g., `ghcr.io/sherwinwater/stt-service:qa`) in `docker-compose.yml` or via an override file.
+
+### 6. CI/CD Automation
+
+CI (`.github/workflows/ci.yml`) runs lint/type-check/tests, builds the Docker image, and pushes tags `:qa` (from the `qa` branch) and `:latest` (from `main`). The deploy workflow SSHs to the target host, pulls the requested tag, and restarts the compose stack. Required GitHub Actions secrets: `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`, `DEPLOY_PATH`, plus `GHCR_PAT` (registry token) if different from the GitHub-provided token.
+
+### 7. Post-Deployment Checks
+
+```bash
+docker compose --profile prod ps
+curl http://<public-host>:8000/health
+journalctl -u docker -f   # optional: tail system logs
+```
+
+### HTTPS / WebSocket Reverse Proxy (Nginx + Let's Encrypt)
+
+Set up edge termination so browsers can connect over HTTPS and WebSockets.
+
+#### 0. Prerequisites
+
+- **DNS**: Create an A record `stt.shuwen.cloud` → your EC2 (or other cloud VM) public IPv4.
+- **Security Group / Firewall**: Allow inbound TCP `80` (HTTP) and `443` (HTTPS).
+- **Backend Reachability**: Confirm the app is listening locally:
+
+  ```bash
+  curl -I http://127.0.0.1:8000/health
+  ```
+
+  If this fails, ensure the container publishes the port (e.g., `ports: ["127.0.0.1:8000:8000"]`) and the FastAPI app binds to `0.0.0.0:8000`.
+
+#### 1. Install Nginx (Ubuntu)
+
+```bash
+sudo apt-get update -y
+sudo apt-get install -y nginx
+nginx -v
+sudo systemctl status nginx --no-pager
+```
+
+#### 2. Create HTTP Reverse Proxy (no TLS yet)
+
+```bash
+sudo bash -c 'cat >/etc/nginx/sites-available/stt.shuwen.cloud.conf << "CONF"
+server {
+    listen 80;
+    server_name stt.shuwen.cloud;
+    client_max_body_size 100m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+    }
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+}
+CONF'
+sudo ln -sf /etc/nginx/sites-available/stt.shuwen.cloud.conf /etc/nginx/sites-enabled/stt.shuwen.cloud.conf
+sudo nginx -t
+sudo systemctl reload nginx
+curl -I http://stt.shuwen.cloud/health
+```
+
+#### 3. Install Certbot
+
+```bash
+sudo snap install core && sudo snap refresh core
+sudo snap install --classic certbot
+sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+```
+
+#### 4. Obtain and Install TLS Certificate
+
+```bash
+sudo certbot --nginx -d stt.shuwen.cloud --non-interactive --agree-tos -m admin@stt.shuwen.cloud
+curl -I https://stt.shuwen.cloud/health
 ```
 
 ## Example Usage
@@ -103,237 +225,50 @@ pytest tests/test_transcribe_ok.py -v
 ### Health Check
 ```bash
 curl http://localhost:8000/health
-# Response: {"status":"ok"}
 ```
 
-### Transcribe Audio File
-```bash
-# Using sample file
-curl -X POST http://localhost:8000/transcribe \
-  -F "file=@samples/hello.m4a" | jq
-
-# Using bash script
-bash scripts/call_local.sh
-
-# Using Python CLI
-python client/cli.py --file samples/hello.m4a
-```
-
-### Transcribe from URL
+### Transcription with Sample Audio
 ```bash
 curl -X POST http://localhost:8000/transcribe \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://example.com/audio.mp3"}' | jq
-```
-
-### With Options
-```bash
-curl -X POST "http://localhost:8000/transcribe?language=en&word_timestamps=true" \
   -F "file=@samples/hello.m4a" | jq
 ```
 
+## Supported Audio Formats & Limits
 
-## Docker
-Build and run:
-```bash
-docker build -t stt-service:local .
-docker run --rm -p 8000:8000 -e MODEL_SIZE=small -v $(pwd)/models:/models stt-service:local
-```
+- Upload formats: `wav`, `mp3`, `m4a`, `ogg`, `webm`, `flac`
+- File size limit: 100 MB per request (`MAX_FILE_MB`)
+- Duration limit: 3,600 seconds per request (`MAX_DURATION_SEC`)
+- Live streaming accepts the same container formats plus raw `s16le`/`f32le` PCM
 
-## Docker Compose (Recommended)
-```bash
-# Build and start
-docker compose up --build -d
+Additional helpers:
+- `bash scripts/call_local.sh` transcribes `samples/hello.m4a`.
+- `python client/cli.py --file samples/hello.m4a` uses the CLI wrapper.
 
-# View logs
-docker compose logs -f
+## API Surface
 
-# Stop
-docker compose down
-```
-
-## Deployment
-
-### Manual Deployment (Ubuntu Server)
-```bash
-# On server
-cd ~/speech-to-text-service
-docker compose pull
-docker compose up -d
-```
-
-### GitHub Actions (CI/CD)
-The repository includes automated CI/CD pipelines:
-
-**CI Pipeline** (`.github/workflows/ci.yml`):
-- Runs on push to main/develop branches
-- Lints code with ruff
-- Type checks with mypy
-- Runs pytest with coverage
-- Builds Docker image
-- Pushes to GitHub Container Registry (GHCR)
-
-**Deploy Pipeline** (`.github/workflows/deploy.yml`):
-- Triggers after successful CI on main branch
-- SSHs to target server
-- Pulls latest image from GHCR
-- Restarts services with docker-compose
-- Cleans up old images
-
-**Required GitHub Secrets**:
-- `SSH_HOST` - Server IP address
-- `SSH_USER` - SSH username (e.g., ubuntu)
-- `SSH_KEY` - Private SSH key
-- `SSH_PORT` - SSH port (default: 22)
-- `DEPLOY_PATH` - Deployment directory (default: ~/speech-to-text-service)
-
-See [DEPLOYMENT.md](documentation/DEPLOYMENT.md) for detailed setup instructions.
-
-## API
-### `GET /health`
-Returns `{ "status": "ok" }`
-
-### `POST /transcribe`
-- **multipart/form-data**: `file`
-- **or** JSON: `{ "url": "http://..." }`
-- Optional Query/Body: `language`, `model_size`, `word_timestamps` (bool)
-
-**Response example**
-```json
-{
-  "text": "hello there ...",
-  "language": "en",
-  "duration_sec": 1.00,
-  "segments": [
-    {"start": 0.0, "end": 1.0, "text": "hello"}
-  ],
-  "model": "faster-whisper:small"
-}
-```
-
-## Bonus: Web Client
-
-A browser-based client is included at `/web` with three modes:
-
-### 1. Upload Mode
-- Select and upload audio files
-- Supports: wav, mp3, m4a, ogg, webm, flac
-- Returns full transcript
-
-### 2. Record Mode (Bonus Feature)
-- Records from microphone using MediaRecorder API
-- Stops recording and uploads to `/transcribe`
-- Displays transcript
-
-### 3. Live Mode (Advanced Bonus)
-- Real-time WebSocket streaming (`/ws/transcribe`)
-- Uses AudioWorklet for PCM16 conversion
-- Incremental transcript updates
-- VAD-based intelligent segmentation
-
-**Access**: `http://localhost:8000/web`
-
-**Architecture**: Modular JavaScript with ES6 modules
-- `app.js` - Main entry point
-- `config.js` - API configuration
-- `tabs.js` - Tab switching
-- `upload.js` - File upload logic
-- `record.js` - Microphone recording
-- `live.js` - WebSocket streaming
-- `styles.css` - All styling
-
-See [client/web/README.md](client/web/README.md) for details.
-
-## Supported Audio Formats
-- **Input**: wav, mp3, m4a, ogg, webm, flac, opus
-- **Processing**: Converted to 16kHz mono WAV via FFmpeg
-- **Limits**: 30MB file size, 600 seconds duration (configurable)
-
-## Notes / Trade-offs
-- **File upload first**: Simpler than true streaming for the core requirement
-- **Mocked tests**: Transcriber is mocked for fast, deterministic tests
-- **CPU-optimized**: Uses int8 quantization for faster CPU inference
-- **Model caching**: Models downloaded once and cached in volume
-- **WebSocket bonus**: Added real-time streaming as advanced feature
-
-### With More Time
-- **Diarization**: Speaker identification
-- **Output formats**: SRT/VTT subtitle formats
-- **Metrics**: Prometheus endpoint for monitoring
-- **Rate limiting**: Protect against abuse
-- **Authentication**: API key or OAuth
-- **Batch processing**: Queue system for multiple files
-- **Language detection**: Auto-detect language
-- **Custom models**: Support for fine-tuned models
+- `GET /health` → `{ "status": "ok" }`
+- `POST /transcribe` accepts multipart `file` uploads or a JSON body with `{"url": "..."}` and options like `language` and `word_timestamps`.
+- `GET /web` serves the client/web front-end.
+- `GET /docs` exposes the interactive OpenAPI docs.
 
 ## Project Structure
+
 ```
 speech-to-text-service/
-├── .github/workflows/          # CI/CD pipelines
-├── api/                        # FastAPI backend API
-│   ├── controllers/            # HTTP/WebSocket endpoints
-│   ├── services/               # Business logic
-│   ├── models/                 # Data models
-│   ├── config/                 # Configuration
-│   └── main.py                 # Application entry point
-├── client/                     # Client applications
-│   ├── cli.py                  # Python CLI client
-│   └── web/                    # Web client
-│       ├── css/                # Stylesheets
-│       └── js/                 # JavaScript modules
-├── tests/                      # Pytest tests
-├── documentation/              # Architecture & guides
-├── samples/                    # Sample audio files
-├── scripts/                    # Helper scripts
-├── Dockerfile                  # Container image
-├── docker-compose.yml          # Orchestration
-├── pyproject.toml              # Python dependencies
-└── README.md                   # This file
+├── api/                  # FastAPI app, controllers, services
+├── client/               # CLI + web client
+├── tests/                # Pytest suites
+├── documentation/        # Architecture, deployment, streaming notes
+├── docker-compose.yml    # Dev/QA/Prod profiles
+├── samples/              # Example audio clips
+├── scripts/              # Utility scripts & client helpers
+└── pyproject.toml
 ```
 
-See [documentation/CLEAN_ARCHITECTURE.md](documentation/CLEAN_ARCHITECTURE.md) for detailed structure.
-
-## Troubleshooting
-
-### Service won't start
-```bash
-# Check logs
-docker compose logs
-
-# Check if port is in use
-lsof -i :8000
-
-# Restart
-docker compose restart
-```
-
-### Tests failing
-```bash
-# Install dev dependencies
-pip install -e ".[dev]"
-
-# Check FFmpeg
-ffmpeg -version
-```
-
-### Model download slow
-```bash
-# Pre-download model
-python -c "from faster_whisper import WhisperModel; WhisperModel('small')"
-```
-
-### Out of memory
-```bash
-# Use smaller model in .env
-MODEL_SIZE=tiny
-```
-
-## Documentation
-
-- **Architecture**: [documentation/CLEAN_ARCHITECTURE.md](documentation/CLEAN_ARCHITECTURE.md)
-- **Deployment Guide**: [documentation/DEPLOYMENT.md](documentation/DEPLOYMENT.md)
-- **Streaming Details**: [documentation/STREAMING_ARCHITECTURE.md](documentation/STREAMING_ARCHITECTURE.md)
-- **Web Client**: [client/web/README.md](client/web/README.md)
-
-## License
-MIT
+## Notes, Trade-offs, and Next Steps
+- Whisper models are heavy; by default we pin to `small` CPU inference. For lower latency you can switch to `tiny` (trade-off: accuracy) or configure a GPU runner (trade-off: infra cost).
+- Streaming uses simple VAD-powered segmentation. A follow-up could incorporate adaptive chunk sizing and endpointing metrics for smoother captions. From the testing, the streaming transcription is not accurate.
+- Caching uses the local filesystem via `~/.cache/whisper`. Consider adding Redis/S3-backed caching if you operate multiple replicas.
+- Authentication/authorization is not implemented; the next iteration could add API keys.
+- Observability is basic (logging only). With more time, integrate OpenTelemetry traces and metrics exporters for production monitoring.
+- Currently uploads are limited to 100 MB and one hour per request; moving large audio to blob storage (e.g. S3) would relax those limits.

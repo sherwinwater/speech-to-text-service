@@ -1,7 +1,12 @@
+from typing import cast
+
 import pytest
+from pydantic import HttpUrl
 
 from api.controllers import streaming_controller, transcription_controller
 from api.models.schemas import TranscribeResponse, UrlRequest
+from api.services.transcriber_service import FakeTranscriber
+from api.services.transcription_service import TranscriptionService
 
 
 def test_streaming_get_transcriber(monkeypatch):
@@ -22,7 +27,7 @@ def test_streaming_get_transcriber(monkeypatch):
 
 
 def test_streaming_get_service(monkeypatch):
-    dummy_transcriber = object()
+    dummy_transcriber = FakeTranscriber()
     created = {}
 
     class DummyService:
@@ -57,7 +62,7 @@ def test_transcription_get_transcriber(monkeypatch):
 
 
 def test_transcription_get_service(monkeypatch):
-    dummy_transcriber = object()
+    dummy_transcriber = FakeTranscriber()
     created = {}
 
     class DummyService:
@@ -93,15 +98,16 @@ async def test_transcribe_routes_to_url():
             return response
 
     service = DummyService()
-    req = UrlRequest(url="https://example.com/audio.wav", language="en")
+    req = UrlRequest(url=cast(HttpUrl, "https://example.com/audio.wav"), language="en")
     result = await transcription_controller.transcribe(
         file=None,
         req=req,
-        service=service,
+        service=cast(TranscriptionService, service),
         language="en",
         model_size="small",
         word_timestamps=False,
     )
 
     assert result.text == "hello"
+    assert service.called is not None
     assert service.called[0] == req

@@ -60,9 +60,15 @@ pre {
     background: #fafafa;
     border: 1px solid #eee;
     border-radius: 8px;
-    padding: .75rem;
+    padding: 1rem;
     max-height: 320px;
     overflow: auto;
+    font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+    line-height: 1.6;
+    letter-spacing: .01em;
+    font-size: 1rem;
+    word-break: break-word;
+    margin-top: 1rem;
 }
 
 .muted {

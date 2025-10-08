@@ -24,7 +24,11 @@ class _StubVad:
 
 
 def ensure_webrtc_stub() -> None:
-    sys.modules.setdefault("webrtcvad", types.SimpleNamespace(Vad=_StubVad))
+    module = sys.modules.get("webrtcvad")
+    if module is None or not hasattr(module, "Vad"):
+        stub = types.ModuleType("webrtcvad")
+        setattr(stub, "Vad", _StubVad)
+        sys.modules["webrtcvad"] = stub
 
 
 ensure_webrtc_stub()

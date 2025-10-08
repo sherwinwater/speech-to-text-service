@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "stt-service"
 version = "0.1.0"
-description = "Open-source Speech-to-Text microservice using faster-whisper + FastAPI"
-authors = [{ name = "Your Name" }]
+description = "Speech-to-Text microservice using faster-whisper + FastAPI"
+authors = [{ name = "Shuwen" }]
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

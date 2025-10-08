@@ -156,6 +156,7 @@ class TestStreamingController:
                 ws.send_text("stop")
                 ws.receive_json()
             assert service.session is not None
+            assert service.handshake is not None
             assert service.handshake.startswith('{"type"')
         finally:
             app.dependency_overrides.pop(get_streaming_service, None)
@@ -168,6 +169,7 @@ class TestStreamingController:
                 ws.send_text('{"type": "start", "format": "s16le"}')
                 ws.close()
                 time.sleep(0.05)
+            assert service.session is not None
             assert service.session.cleanup_called is True
         finally:
             app.dependency_overrides.pop(get_streaming_service, None)

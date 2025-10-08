@@ -4,6 +4,7 @@ Streaming Controller - WebSocket endpoint for real-time transcription.
 
 import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from typing import Optional
 
 from api.services.transcriber_service import Transcriber, FasterWhisperTranscriber
 from api.services.streaming_service import StreamingService, StreamingSession
@@ -63,7 +64,10 @@ async def ws_transcribe(
             logger.info(f"Handshake received [id={session_id}]: format={audio_format.format_type}, rate={audio_format.sample_rate}")
         except ValueError as e:
             logger.warning(f"Invalid handshake [id={session_id}]: {e}")
-            await websocket.close(code=1002, reason="Invalid handshake")
+            reason = str(e)
+            if len(reason) > 120:
+                reason = reason[:117] + "..."
+            await websocket.close(code=1003, reason=reason or "Invalid handshake")
             return
         
         # Step 2: Create session

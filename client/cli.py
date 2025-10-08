@@ -1,5 +1,10 @@
+import argparse
+import importlib
+import os
+import sys
+from typing import Any, cast
 
-import argparse, requests, sys, os
+requests = cast(Any, importlib.import_module("requests"))
 
 def main():
     ap = argparse.ArgumentParser()

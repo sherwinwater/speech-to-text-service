@@ -1,5 +1,11 @@
+import builtins
+import importlib
+import sys
+
+from typing import cast
+
 import pytest
-from pydantic import ValidationError
+from pydantic import HttpUrl, ValidationError
 
 from api.models.schemas import Segment, TranscribeResponse, UrlRequest
 
@@ -14,13 +20,14 @@ class TestSegment:
 
     def test_segment_validation_error(self):
         with pytest.raises(ValidationError):
-            Segment(start=0.0, end=1.5, text=None)
+            Segment(start=0.0, end=1.5, text=None)  # type: ignore[arg-type]
 
 
 class TestUrlRequest:
     def test_url_request_creation(self):
+        url = cast(HttpUrl, "https://example.com/audio.mp3")
         req = UrlRequest(
-            url="https://example.com/audio.mp3",
+            url=url,
             language="en",
             model_size="medium",
             word_timestamps=True,
@@ -33,7 +40,7 @@ class TestUrlRequest:
 
     def test_url_request_invalid_url(self):
         with pytest.raises(ValidationError):
-            UrlRequest(url="not-a-url")
+            UrlRequest(url="not-a-url")  # type: ignore[arg-type]
 
 
 class TestTranscribeResponse:
@@ -59,9 +66,10 @@ class TestTranscribeResponse:
                 language=None,
                 duration_sec=None,
                 segments=[],
-            )
+            )  # type: ignore[call-arg]
 
-    def test_response_serialization(self):
+    @pytest.mark.parametrize("force_legacy", [False, True])
+    def test_response_serialization(self, force_legacy):
         response = TranscribeResponse(
             text="hello world",
             language=None,
@@ -70,9 +78,35 @@ class TestTranscribeResponse:
             model="fake:small",
         )
 
-        data = response.model_dump()
+        serializer = getattr(response, "model_dump", None)
+        if force_legacy:
+            serializer = None
+
+        if serializer is None:
+            data = response.dict()
+        else:
+            data = serializer()
 
         assert data["text"] == "hello world"
         assert data["language"] is None
         assert data["segments"] == []
         assert data["model"] == "fake:small"
+
+def test_configdict_fallback(monkeypatch):
+    original_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "pydantic" and fromlist and "ConfigDict" in fromlist:
+            raise ImportError("ConfigDict missing")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    sys.modules.pop("api.models.schemas", None)
+
+    module = importlib.import_module("api.models.schemas")
+
+    assert module.HAS_V2 is False
+    assert hasattr(module.UrlRequest, "Config")
+
+    sys.modules.pop("api.models.schemas", None)
+    importlib.import_module("api.models.schemas")

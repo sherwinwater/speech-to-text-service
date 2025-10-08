@@ -1,6 +1,8 @@
 import asyncio
+import importlib
 import sys
 import types
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -14,7 +16,9 @@ class _StubVad:
         return True
 
 
-sys.modules.setdefault("webrtcvad", types.SimpleNamespace(Vad=_StubVad))
+_stub_module = types.ModuleType("webrtcvad")
+setattr(_stub_module, "Vad", _StubVad)
+sys.modules.setdefault("webrtcvad", _stub_module)
 
 from api.services.streaming_service import (  # noqa: E402
     AudioFormat,
@@ -78,6 +82,39 @@ class _DummyProcess:
         return 0
 
 
+def test_streaming_session_uses_real_vad_when_available(monkeypatch):
+    import api.services.streaming_service as streaming_module
+
+    fake_webrtc = types.ModuleType("webrtcvad")
+
+    class FakeVad:
+        def __init__(self, aggressiveness: int):
+            self.aggressiveness = aggressiveness
+
+        def is_speech(self, frame, sample_rate):
+            return True
+
+    setattr(fake_webrtc, "Vad", FakeVad)
+    vad_cls = getattr(fake_webrtc, "Vad")
+    assert vad_cls(0).is_speech(b"", 16000) is True
+
+    monkeypatch.setitem(sys.modules, "webrtcvad", fake_webrtc)
+    module_with_vad = importlib.reload(streaming_module)
+    try:
+        assert getattr(module_with_vad, "_HAS_REAL_VAD") is True
+        AudioFormatCls = getattr(module_with_vad, "AudioFormat")
+        StreamingSessionCls = getattr(module_with_vad, "StreamingSession")
+        session = StreamingSessionCls(1, AudioFormatCls("s16le", 16000), FakeTranscriber())
+        assert session.has_real_vad is True
+    finally:
+        restored = importlib.reload(streaming_module)
+        globals().update(
+            AudioFormat=getattr(restored, "AudioFormat"),
+            StreamingService=getattr(restored, "StreamingService"),
+            StreamingSession=getattr(restored, "StreamingSession"),
+        )
+
+
 class TestAudioFormat:
     def test_needs_conversion_false(self):
         audio_format = AudioFormat("s16le", 16000)
@@ -125,6 +162,20 @@ class TestStreamingService:
 
         with pytest.raises(ValueError):
             service.parse_handshake('{"type": "start", "model_size": "giant"}')
+
+    def test_parse_handshake_unsupported_format(self):
+        service = StreamingService(FakeTranscriber())
+
+        with pytest.raises(ValueError) as exc:
+            service.parse_handshake('{"type": "start", "format": "avi"}')
+
+        assert "Unsupported format" in str(exc.value)
+
+    def test_parse_handshake_alias_map(self):
+        service = StreamingService(FakeTranscriber())
+        fmt, _ = service.parse_handshake('{"type": "start", "format": "mp4"}')
+
+        assert fmt.format_type == "m4a"
 
     def test_create_session(self):
         service = StreamingService(FakeTranscriber())
@@ -198,6 +249,7 @@ class TestStreamingService:
 
         result = await service.process_audio_chunk(session, b"", force=True)
 
+        assert result is not None
         assert result["type"] == "delta"
         assert result["append"] == "hello world"
 
@@ -218,6 +270,24 @@ class TestStreamingService:
         assert result is sentinel
 
     @pytest.mark.asyncio
+    async def test_process_audio_chunk_supports_coroutine_transcribe(self, monkeypatch):
+        service = StreamingService(FakeTranscriber())
+        session = StreamingSession(1, AudioFormat("s16le", 16000), FakeTranscriber())
+
+        monkeypatch.setattr(session, "should_transcribe", lambda force=False: True)
+        monkeypatch.setattr(session, "get_audio_chunk_for_transcription", lambda: np.ones(4, dtype=np.float32))
+
+        async def async_transcribe(self, audio):
+            return {"type": "delta", "append": "async"}
+
+        monkeypatch.setattr(session, "transcribe_chunk", types.MethodType(async_transcribe, session))
+        monkeypatch.setattr(session, "trim_buffer", lambda: None)
+
+        result = await service.process_audio_chunk(session, b"data")
+
+        assert result == {"type": "delta", "append": "async"}
+
+    @pytest.mark.asyncio
     async def test_process_audio_chunk_handles_missing_audio(self, monkeypatch):
         service = StreamingService(FakeTranscriber())
         session = StreamingSession(1, AudioFormat("s16le", 16000), FakeTranscriber())
@@ -234,7 +304,7 @@ class TestStreamingService:
         session = StreamingSession(1, AudioFormat("s16le", None), FakeTranscriber())
 
         # Force raw PCM with missing rate
-        session.audio_format.sample_rate = None
+        session.audio_format.sample_rate = 0
 
         with pytest.raises(ValueError):
             await session.start_ffmpeg_decoder()
@@ -248,6 +318,57 @@ class TestStreamingSession:
         session.add_audio_data(b"def")
 
         assert bytes(session.pcm_buffer) == b"abcdef"
+
+    @pytest.mark.asyncio
+    async def test_read_pcm_logs_ffmpeg_errors(self, caplog):
+        session = StreamingSession(1, AudioFormat("webm", 48000), FakeTranscriber())
+
+        class FaultyStdout:
+            async def read(self, _size):
+                raise RuntimeError("boom")
+
+        session.ffmpeg_process = cast(Any, types.SimpleNamespace(stdout=FaultyStdout()))
+
+        with caplog.at_level("ERROR", logger="service.streaming"):
+            await session._read_pcm_from_ffmpeg()
+
+        assert "FFmpeg read error" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_feed_to_ffmpeg_auto_starts_decoder(self, monkeypatch):
+        session = StreamingSession(1, AudioFormat("webm", 48000), FakeTranscriber())
+
+        class FakeStdin:
+            def __init__(self):
+                self.writes = []
+                self.drained = False
+
+            def write(self, data):
+                self.writes.append(data)
+
+            async def drain(self):
+                self.drained = True
+
+            def is_closing(self):
+                return False
+
+        status: dict[str, object] = {}
+
+        async def fake_start():
+            status["started"] = True
+            stdin = FakeStdin()
+            status["stdin"] = stdin
+            session.ffmpeg_process = cast(Any, types.SimpleNamespace(stdin=stdin))
+
+        monkeypatch.setattr(session, "start_ffmpeg_decoder", fake_start)
+
+        await session.feed_to_ffmpeg(b"abc")
+
+        assert status.get("started") is True
+        stdin = status["stdin"]
+        assert isinstance(stdin, FakeStdin)
+        assert stdin.writes == [b"abc"]
+        assert stdin.drained is True
 
     def test_transcribe_chunk_returns_delta(self):
         session = StreamingSession(1, AudioFormat("s16le", 16000), FakeTranscriber())
@@ -285,16 +406,30 @@ class TestStreamingSession:
 
         assert result == {}
 
+    def test_should_transcribe_when_chunk_full(self):
+        session = StreamingSession(1, AudioFormat("s16le", 16000), FakeTranscriber())
+        session.pcm_buffer.extend(b"\x00" * session.chunk_bytes)
+
+        assert session.should_transcribe() is True
+
+    def test_get_audio_chunk_returns_none_for_empty_array(self, monkeypatch):
+        session = StreamingSession(1, AudioFormat("s16le", 16000), FakeTranscriber())
+        session.pcm_buffer.extend(b"\x00\x00")
+
+        monkeypatch.setattr(session, "_pcm16_to_float32", lambda pcm: np.zeros(0, dtype=np.float32))
+
+        assert session.get_audio_chunk_for_transcription() is None
+
     @pytest.mark.asyncio
     async def test_cleanup_handles_missing_process(self):
         session = StreamingSession(1, AudioFormat("s16le", 16000), FakeTranscriber())
         loop = asyncio.get_running_loop()
-        reader_task = loop.create_future()
-        session.reader_task = reader_task
+        reader_future = loop.create_future()
+        session.reader_task = cast(asyncio.Task[Any], reader_future)
 
         await session.cleanup()
 
-        assert reader_task.cancelled()
+        assert reader_future.cancelled()
 
     @pytest.mark.asyncio
     async def test_start_ffmpeg_decoder_reads_output(self, monkeypatch):
@@ -317,6 +452,7 @@ class TestStreamingSession:
         await session.close_ffmpeg_input()
         assert process.stdin.closed is True
 
+        assert session.reader_task is not None
         await session.reader_task
         await session.cleanup()
         assert process.kill_called is True
@@ -332,17 +468,46 @@ class TestStreamingSession:
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
         await session.start_ffmpeg_decoder()
+        assert session.reader_task is not None
         await session.reader_task
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("fmt", "expected_input_fmt"),
+        [
+            ("m4a", "mp4"),
+            ("mp3", "mp3"),
+            ("wav", "wav"),
+            ("flac", "flac"),
+        ],
+    )
+    async def test_start_ffmpeg_decoder_container_formats(self, monkeypatch, fmt, expected_input_fmt):
+        session = StreamingSession(1, AudioFormat(fmt, 44100), FakeTranscriber())
+        process = _DummyProcess([b""])
+        captured = {}
+
+        async def fake_exec(*args, **kwargs):
+            captured["args"] = args
+            return process
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+        await session.start_ffmpeg_decoder()
+        assert session.reader_task is not None
+        assert captured["args"][:6] == ("ffmpeg", "-hide_banner", "-loglevel", "error", "-fflags", "+discardcorrupt")
+        assert captured["args"][6:10] == ("-f", expected_input_fmt, "-i", "pipe:0")
+        assert captured["args"][-7:] == ("-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1")
 
     @pytest.mark.asyncio
     async def test_start_ffmpeg_decoder_close_eof_error(self, monkeypatch):
         session = StreamingSession(1, AudioFormat("webm", 48000), FakeTranscriber())
         process = _DummyProcess([b""])
 
-        def boom():
-            raise RuntimeError("fail")
+        class FailingStdin(_DummyStdin):
+            def write_eof(self):
+                raise RuntimeError("fail")
 
-        process.stdin.write_eof = boom
+        process.stdin = FailingStdin()
 
         async def fake_exec(*args, **kwargs):
             return process
@@ -374,15 +539,17 @@ class TestStreamingSession:
             async def wait(self):
                 raise RuntimeError("wait boom")
 
-        session.reader_task = FaultyTask()
-        session.ffmpeg_process = FaultyProcess()
+        session.reader_task = cast(asyncio.Task[Any], FaultyTask())
+        session.ffmpeg_process = cast(Any, FaultyProcess())
 
+        assert session.reader_task is not None
         gen = session.reader_task.__await__()
         with pytest.raises(StopIteration):
             gen.send(None)
 
         await session.cleanup()
 
+        assert session.ffmpeg_process is not None
         with pytest.raises(RuntimeError):
             await session.ffmpeg_process.wait()
 
@@ -541,7 +708,7 @@ class TestStreamingSession:
                 return b""
 
         session = StreamingSession(1, AudioFormat("webm", 48000), FakeTranscriber())
-        session.ffmpeg_process = types.SimpleNamespace(stdout=DummyStdout())
+        session.ffmpeg_process = cast(Any, types.SimpleNamespace(stdout=DummyStdout()))
 
         await session._read_pcm_from_ffmpeg()
 
@@ -554,7 +721,7 @@ class TestStreamingSession:
                 raise asyncio.CancelledError
 
         session = StreamingSession(1, AudioFormat("webm", 48000), FakeTranscriber())
-        session.ffmpeg_process = types.SimpleNamespace(stdout=CancelStdout())
+        session.ffmpeg_process = cast(Any, types.SimpleNamespace(stdout=CancelStdout()))
 
         await session._read_pcm_from_ffmpeg()
 
@@ -614,7 +781,7 @@ async def test_faulty_task_cleanup_path(monkeypatch):
             return _().__await__()
 
     session = StreamingSession(1, AudioFormat("s16le", 16000), FakeTranscriber())
-    session.reader_task = FaultyTask()
+    session.reader_task = cast(asyncio.Task[Any], FaultyTask())
     session.ffmpeg_process = None
 
     await session.cleanup()

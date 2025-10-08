@@ -25,6 +25,7 @@ export function initLive() {
     liveBtn.onclick = async () => {
         transcript = "";
         outLive.textContent = '';
+        liveHelp.textContent = '';
         if (!supportsMediaRecorder) {
             liveHelp.textContent = 'Live mode not supported in this browser.';
             return;
@@ -86,6 +87,9 @@ export function initLive() {
             ws.onclose = (e) => {
                 console.log('[WS] Closed', e.code, e.reason);
                 liveStatus.textContent = 'Disconnected';
+                if (e.reason) {
+                    liveHelp.textContent = e.reason;
+                }
                 // Only update buttons if we were actually active
                 if (isLiveActive) {
                     setLiveEnabled(false);
@@ -95,6 +99,7 @@ export function initLive() {
             ws.onerror = (e) => {
                 console.error('[WS] Error', e);
                 liveStatus.textContent = 'WS error';
+                liveHelp.textContent = 'WebSocket error occurred.';
             };
 
             ws.onmessage = (ev) => {
