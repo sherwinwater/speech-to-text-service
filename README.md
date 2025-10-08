@@ -197,7 +197,7 @@ sudo bash -c 'cat >/etc/nginx/sites-available/stt.shuwen.cloud.conf << "CONF"
 server {
     listen 80;
     server_name stt.shuwen.cloud;
-    client_max_body_size 100m;
+    client_max_body_size 30m;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -270,7 +270,7 @@ curl -X POST https://stt.shuwen.cloud/transcribe \
 ## Supported Audio Formats & Limits
 
 - Upload formats: `wav`, `mp3`, `m4a`, `ogg`, `webm`, `flac`
-- File size limit: 100 MB per request (`MAX_FILE_MB`)
+- File size limit: 30 MB per request (`MAX_FILE_MB`)
 - Duration limit: 3,600 seconds per request (`MAX_DURATION_SEC`)
 - Live streaming accepts the same container formats plus raw `s16le`/`f32le` PCM
 
@@ -305,4 +305,4 @@ speech-to-text-service/
 - Caching uses the local filesystem via `~/.cache/whisper`. Consider adding Redis/S3-backed caching if you operate multiple replicas.
 - Authentication/authorization is not implemented; the next iteration could add API keys.
 - Observability is basic (logging only). With more time, integrate OpenTelemetry traces and metrics exporters for production monitoring.
-- Currently uploads are limited to 100 MB and one hour per request; moving large audio to blob storage (e.g. S3) would relax those limits.
+- Currently uploads are limited to 30 MB and one hour per request; moving large audio to blob storage (e.g. S3) would relax those limits.
