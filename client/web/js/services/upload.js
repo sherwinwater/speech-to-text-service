@@ -9,7 +9,7 @@ export function initUpload() {
     const sendBtn = document.getElementById('send');
     const outUpload = document.getElementById('out-upload');
     const SUPPORTED = ['wav', 'mp3', 'm4a', 'ogg', 'webm', 'flac'];
-    const MAX_FILE_MB = 100; // keep in sync with server default
+    const MAX_FILE_MB = 30; // keep in sync with server default
 
     sendBtn.onclick = async () => {
         const f = fileInput.files?.[0];
