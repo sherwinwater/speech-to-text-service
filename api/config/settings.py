@@ -2,12 +2,12 @@
 import os
 
 try:
-    from pydantic_settings import BaseSettings as _BaseSettings  # Pydantic v2 support
+    from pydantic_settings import BaseSettings  # type: ignore
 except ImportError:
-    from pydantic import BaseSettings as _BaseSettings  # Fallback for Pydantic v1
+    from pydantic import BaseSettings  # type: ignore
 
 
-class Settings(_BaseSettings):
+class Settings(BaseSettings):
     model_size: str = os.getenv("MODEL_SIZE", "small")
     compute_type: str = os.getenv("COMPUTE_TYPE", "int8")
     max_file_mb: int = int(os.getenv("MAX_FILE_MB", "100"))

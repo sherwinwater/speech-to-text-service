@@ -1,14 +1,13 @@
-
 from typing import List, Optional
 
 try:
-    from pydantic import BaseModel, Field, HttpUrl, ConfigDict  # Pydantic v2
+    # Pydantic v2
+    from pydantic import BaseModel, Field, HttpUrl, ConfigDict
+    HAS_V2 = True
 except ImportError:
+    # Pydantic v1 fallback
     from pydantic import BaseModel, Field, HttpUrl  # type: ignore
-    ConfigDict = None  # type: ignore[assignment]
-    _CONFIG_DICT_AVAILABLE = False
-else:
-    _CONFIG_DICT_AVAILABLE = True
+    HAS_V2 = False
 
 
 class Segment(BaseModel):
@@ -26,12 +25,14 @@ class TranscribeResponse(BaseModel):
 
 
 class UrlRequest(BaseModel):
-    if _CONFIG_DICT_AVAILABLE:
+    if HAS_V2:
         model_config = ConfigDict(protected_namespaces=())
     else:
-        class Config:  # type: ignore[no-redef]
-            pass
-    
+        class Config:
+            # for Pydantic v1
+            arbitrary_types_allowed = True
+            extra = "ignore"
+
     url: HttpUrl
     language: Optional[str] = None
     model_size: Optional[str] = None

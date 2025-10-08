@@ -1,11 +1,12 @@
 import asyncio
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
-from starlette.websockets import WebSocketDisconnect
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from api.controllers import streaming_controller
+from api.services.streaming_service import StreamingService
 
 
 class StubWebSocket:
@@ -84,6 +85,13 @@ class StubService:
         return self.result
 
 
+async def _call_ws_transcribe(websocket: StubWebSocket, service: Any):
+    await streaming_controller.ws_transcribe(
+        cast(WebSocket, websocket),
+        service=cast(StreamingService, service),
+    )
+
+
 @pytest.mark.asyncio
 async def test_ws_transcribe_handles_disconnect(monkeypatch):
     websocket = StubWebSocket([
@@ -92,7 +100,7 @@ async def test_ws_transcribe_handles_disconnect(monkeypatch):
     ])
     service = StubService()
 
-    await streaming_controller.ws_transcribe(websocket, service=service)
+    await _call_ws_transcribe(websocket, service)
 
     assert websocket.accepted is True
     assert service.session.cleaned is True
@@ -106,7 +114,7 @@ async def test_ws_transcribe_handles_unexpected_exception(monkeypatch):
     ])
     service = StubService(result=None, raises=ValueError("boom"))
 
-    await streaming_controller.ws_transcribe(websocket, service=service)
+    await _call_ws_transcribe(websocket, service)
 
     assert websocket.closed == (1011, "Internal error")
     assert service.session.cleaned is True
@@ -120,7 +128,7 @@ async def test_ws_transcribe_handles_runtime_error(monkeypatch):
     ])
     service = StubService(result=None, raises=RuntimeError("boom"))
 
-    await streaming_controller.ws_transcribe(websocket, service=service)
+    await _call_ws_transcribe(websocket, service)
 
     assert websocket.closed == (1011, "Internal error")
     assert service.session.cleaned is True
@@ -134,7 +142,7 @@ async def test_ws_transcribe_close_failure(monkeypatch):
     )
     service = StubService(result=None, raises=ValueError("boom"))
 
-    await streaming_controller.ws_transcribe(websocket, service=service)
+    await _call_ws_transcribe(websocket, service)
 
     assert websocket.closed is None
     assert service.session.cleaned is True
@@ -192,7 +200,7 @@ async def test_ws_transcribe_truncates_long_close_reason():
 
     websocket = StubWebSocket(['{"type": "start"}'])
 
-    await streaming_controller.ws_transcribe(websocket, service=FailingService())
+    await _call_ws_transcribe(websocket, FailingService())
 
     assert websocket.closed == (1003, long_reason[:117] + "...")
 
@@ -211,7 +219,7 @@ async def test_ws_transcribe_sends_delta(monkeypatch):
         "stop",
     ])
 
-    await streaming_controller.ws_transcribe(websocket, service=service)
+    await _call_ws_transcribe(websocket, service)
 
     assert {"type": "delta", "append": "chunk"} in websocket.sent
     assert {"type": "final"} in websocket.sent
@@ -230,7 +238,7 @@ async def test_ws_transcribe_forces_final_delta(monkeypatch):
         "stop",
     ])
 
-    await streaming_controller.ws_transcribe(websocket, service=service)
+    await _call_ws_transcribe(websocket, service)
 
     assert {"type": "delta", "append": "final"} in websocket.sent
     assert {"type": "final"} in websocket.sent

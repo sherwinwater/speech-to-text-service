@@ -1,7 +1,10 @@
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+from typing import cast
+
 import pytest
 from fastapi import HTTPException, UploadFile
+from pydantic import HttpUrl
 
 from api.services.transcription_service import TranscriptionService
 from api.services.transcriber_service import FakeTranscriber
@@ -191,7 +194,12 @@ class TestTranscriptionService:
         assert timestamps is False
 
     def test_resolve_transcription_params_with_request(self, service):
-        req = UrlRequest(url="https://example.com/audio.mp3", language="en", model_size="medium", word_timestamps=True)
+        req = UrlRequest(
+            url=cast(HttpUrl, "https://example.com/audio.mp3"),
+            language="en",
+            model_size="medium",
+            word_timestamps=True,
+        )
 
         lang, model_size, timestamps = service.resolve_transcription_params(None, None, False, req)
 
@@ -222,7 +230,7 @@ class TestTranscriptionService:
         mock_normalize.return_value = ("/tmp/out.wav", 3.0)
         monkeypatch.setattr(TranscriptionService, "validate_audio_format", lambda self, path, original_name=None: "mp3")
 
-        req = UrlRequest(url="https://example.com/audio.mp3")
+        req = UrlRequest(url=cast(HttpUrl, "https://example.com/audio.mp3"))
         result = await service.transcribe_from_url(req)
 
         assert result.text == "hello world"

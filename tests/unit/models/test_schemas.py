@@ -2,8 +2,10 @@ import builtins
 import importlib
 import sys
 
+from typing import cast
+
 import pytest
-from pydantic import ValidationError
+from pydantic import HttpUrl, ValidationError
 
 from api.models.schemas import Segment, TranscribeResponse, UrlRequest
 
@@ -18,13 +20,14 @@ class TestSegment:
 
     def test_segment_validation_error(self):
         with pytest.raises(ValidationError):
-            Segment(start=0.0, end=1.5, text=None)
+            Segment(start=0.0, end=1.5, text=None)  # type: ignore[arg-type]
 
 
 class TestUrlRequest:
     def test_url_request_creation(self):
+        url = cast(HttpUrl, "https://example.com/audio.mp3")
         req = UrlRequest(
-            url="https://example.com/audio.mp3",
+            url=url,
             language="en",
             model_size="medium",
             word_timestamps=True,
@@ -37,7 +40,7 @@ class TestUrlRequest:
 
     def test_url_request_invalid_url(self):
         with pytest.raises(ValidationError):
-            UrlRequest(url="not-a-url")
+            UrlRequest(url="not-a-url")  # type: ignore[arg-type]
 
 
 class TestTranscribeResponse:
@@ -63,7 +66,7 @@ class TestTranscribeResponse:
                 language=None,
                 duration_sec=None,
                 segments=[],
-            )
+            )  # type: ignore[call-arg]
 
     @pytest.mark.parametrize("force_legacy", [False, True])
     def test_response_serialization(self, force_legacy):
@@ -102,7 +105,7 @@ def test_configdict_fallback(monkeypatch):
 
     module = importlib.import_module("api.models.schemas")
 
-    assert module.ConfigDict is None
+    assert module.HAS_V2 is False
     assert hasattr(module.UrlRequest, "Config")
 
     sys.modules.pop("api.models.schemas", None)
