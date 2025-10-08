@@ -9,7 +9,17 @@ Hosted demo: visit https://stt.shuwen.cloud/web to try file uploads, in-browser 
 
 ## Architecture Overview
 
-The system follows a clean architecture split into controllers (REST/WebSocket) under `api/controllers`, domain services in `api/services`, and adapters for audio/model handling. Requests enter FastAPI, audio is normalized to 16 kHz mono WAV through FFmpeg, and transcripts are generated via Faster Whisper with optional streaming through `/ws/transcribe`. Docker images wrap the app with model caching, and CI/CD pipelines publish GHCR images (`:dev`, `:qa`, `:latest`) that the compose profiles consume. See `documentation/ARCHITECTURE.md` for diagrams and deeper detail.
+The system follows a clean architecture split into controllers (REST/WebSocket) under `api/controllers`, domain services in `api/services`, and adapters for audio/model handling. Requests enter FastAPI, audio is normalized to 16 kHz mono WAV through FFmpeg, and transcripts are generated via Faster Whisper with optional streaming through `/ws/transcribe`. Docker images wrap the app with model caching, and CI/CD pipelines publish GHCR images for each environment (e.g., `:dev`, `:qa`, `:prod-<sha>`). See `documentation/ARCHITECTURE.md` for diagrams and deeper detail.
+
+## Configuration
+
+Runtime configuration lives in environment-specific modules:
+
+- `api/config/settings_dev.py`
+- `api/config/settings_qa.py`
+- `api/config/settings_prod.py`
+
+`APP_ENV` selects which module to load (`dev` by default). Each module defines sensible defaults that can be overridden by environment variables (e.g., `MODEL_SIZE`, `COMPUTE_TYPE`, `MAX_DURATION_SEC`). Sample env files (`.env.dev`, `.env.qa`, `.env.prod`) mirror the legacy `.env.*` layout and continue to work.
 
 ## Local Development
 
@@ -47,34 +57,32 @@ pip install -e ".[dev]"
 # FastAPI with auto-reload
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Or run the stack in containers (rebuilds backend + web client)
-docker compose --profile dev up --build
+# Or build + run via Docker (uses APP_ENV=dev)
+docker compose up --build
 ```
 
 Open `http://localhost:8000/web` for the front-end playground. The API root lives at `http://localhost:8000`.
+
+### Local Docker Workflow
+
+The provided `docker-compose.yml` is scoped to local development. It builds from the repository Dockerfile with `APP_ENV=dev`, mounts your working tree for live edits, and loads `.env.dev` automatically:
+
+```bash
+# Build and launch
+docker compose up --build
+
+# Recreate after changing dependencies
+docker compose up --build --force-recreate
+
+# Tear down
+docker compose down
+```
 
 ## Running Tests
 
 ```bash
 pytest --cov=api --cov=tests --cov-report=term-missing
 ```
-
-## Docker Compose Profiles
-
-Compose profiles map 1:1 to environments and reuse the single `docker-compose.yml`:
-
-```bash
-# Development (build locally)
-docker compose --profile dev --env-file .env.dev up -d
-
-# QA (pull image :qa)
-docker compose --profile qa --env-file .env.qa up -d
-
-# Production (pull image :latest)
-docker compose --profile prod --env-file .env.prod up -d
-```
-
-`dev` builds from source so you can iterate quickly. `qa` and `prod` pull the prebuilt images published to GHCR by the CI workflow.
 
 ## Deployment
 
@@ -126,20 +134,33 @@ The token needs `read:packages` scope to pull published images.
 ### 5. Deploy / Promote Manually
 
 ```bash
-docker compose --profile prod pull
-docker compose --profile prod up -d --remove-orphans
+IMAGE_BASE=ghcr.io/sherwinwater/speech-to-text-service
+IMAGE_TAG=prod-$(git rev-parse --short HEAD)  # or pick a published tag
+docker pull "${IMAGE_BASE}:${IMAGE_TAG}"
+
+docker stop speech-to-text-service 2>/dev/null || true
+docker rm speech-to-text-service 2>/dev/null || true
+
+docker run -d \
+  --name speech-to-text-service \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  --env APP_ENV=prod \
+  --env-file .env.prod \
+  -v "$(pwd)/models:/root/.cache/whisper" \
+  "${IMAGE_BASE}:${IMAGE_TAG}"
 ```
 
-To roll back, re-run the commands with a pinned tag (e.g., `ghcr.io/sherwinwater/stt-service:qa`) in `docker-compose.yml` or via an override file.
+To roll back, pull and run a previously published tag.
 
 ### 6. CI/CD Automation
 
-CI (`.github/workflows/ci.yml`) runs lint/type-check/tests, builds the Docker image, and pushes tags `:qa` (from the `qa` branch) and `:latest` (from `main`). The deploy workflow SSHs to the target host, pulls the requested tag, and restarts the compose stack. Required GitHub Actions secrets: `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`, `DEPLOY_PATH`, plus `GHCR_PAT` (registry token) if different from the GitHub-provided token.
+CI (`.github/workflows/ci.yml`) runs lint/type-check/tests, then builds and pushes GHCR images for each environment (`:dev`, `:qa`, `:prod`) alongside immutable tags (`:<env>-<commit>`). The deploy workflow SSHs to the target host, pulls the `prod-<sha>` image published by CI, and restarts the container with `docker run`. Required GitHub Actions secrets: `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`, `DEPLOY_PATH`, plus `GHCR_PAT` (registry token) if different from the GitHub-provided token.
 
 ### 7. Post-Deployment Checks
 
 ```bash
-docker compose --profile prod ps
+docker ps --filter "name=speech-to-text-service"
 curl http://<public-host>:8000/health
 journalctl -u docker -f   # optional: tail system logs
 ```
@@ -272,7 +293,7 @@ speech-to-text-service/
 ├── client/               # CLI + web client
 ├── tests/                # Pytest suites
 ├── documentation/        # Architecture, deployment, streaming notes
-├── docker-compose.yml    # Dev/QA/Prod profiles
+├── docker-compose.yml    # Local development compose file
 ├── samples/              # Example audio clips
 ├── scripts/              # Utility scripts & client helpers
 └── pyproject.toml

@@ -5,6 +5,16 @@ body {
     padding: 0 1rem;
 }
 
+.repo-link {
+    font-size: 0.7em;
+    font-weight: normal;
+}
+
+.repo-link a {
+    color: inherit;
+    text-decoration: underline;
+}
+
 .cards {
     display: grid;
     gap: 1rem;

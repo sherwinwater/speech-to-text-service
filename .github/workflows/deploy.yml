@@ -15,7 +15,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: aws
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    if: >
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
 
     steps:
       - name: Deploy to server
@@ -29,32 +33,52 @@ jobs:
           script: |
             set -euo pipefail
 
-            # Resolve deploy path (fallback to ~/speech-to-text-service)
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
             DEPLOY_PATH="${DEPLOY_PATH:-$HOME/speech-to-text-service}"
+            CONTAINER_NAME="speech-to-text-service"
+            IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+            IMAGE_BASE="${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}"
+
+            # Use SHA from triggering CI if present; else this workflow's SHA
+            IMAGE_TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
+            IMAGE_REF="${IMAGE_BASE}:prod-${IMAGE_TAG}"
+
+            echo "[info] Deploying ${IMAGE_REF}"
             cd "$DEPLOY_PATH"
 
-            # Optional: keep local checkout fresh if you build on server
-            if [ -d .git ]; then
-              git fetch origin main
-              git reset --hard origin/main
+            # 1) Free port 8000 if any container is publishing it
+            PUBLISHING=$(sudo docker ps --filter "publish=8000" -q || true)
+            if [ -n "$PUBLISHING" ]; then
+              echo "[info] Stopping containers publishing :8000"
+              sudo docker stop $PUBLISHING || true
+              sudo docker rm $PUBLISHING || true
             fi
 
-            # Login to GHCR on the remote host using a PAT
-            echo "${{ secrets.GHCR_TOKEN }}" | sudo docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
-
-            # Pull and restart using Compose (support v2 and legacy)
-            if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-              sudo docker compose pull
-              sudo docker compose up -d --remove-orphans
-              sudo docker compose ps
-            else
-              sudo docker-compose pull
-              sudo docker-compose up -d --remove-orphans
-              sudo docker-compose ps
+            # 2) Stop/remove by name (idempotent)
+            if sudo docker ps -a --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}$"; then
+              echo "[info] Stopping existing ${CONTAINER_NAME}"
+              sudo docker stop "${CONTAINER_NAME}" || true
+              sudo docker rm "${CONTAINER_NAME}" || true
             fi
 
-            # Clean up old images
-            sudo docker image prune -af
+            # 3) Pull immutable tag; if not found yet, fall back to :prod
+            if ! sudo docker pull "$IMAGE_REF"; then
+              echo "[warn] $IMAGE_REF not found; falling back to ${IMAGE_BASE}:prod"
+              IMAGE_REF="${IMAGE_BASE}:prod"
+              sudo docker pull "$IMAGE_REF"
+            fi
 
-            echo "Deployment completed successfully!"
+            # 4) Ensure host dirs for mounts exist
+            mkdir -p "$DEPLOY_PATH/models"
+
+            # 5) Run new container (no env file; only APP_ENV=prod)
+            sudo docker run -d \
+              --name "$CONTAINER_NAME" \
+              --restart unless-stopped \
+              -p 8000:8000 \
+              -e APP_ENV=prod \
+              -v "$(pwd)/models:/root/.cache/whisper" \
+              "$IMAGE_REF"
+
+            sudo docker ps --filter "name=$CONTAINER_NAME"
+            echo "[ok] deployed"
