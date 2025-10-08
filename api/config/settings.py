@@ -43,7 +43,7 @@ def _load_settings(env: str) -> AppSettings:
 @lru_cache(maxsize=None)
 def get_settings(env: str | None = None) -> AppSettings:
     """Resolve settings for the requested environment or the current APP_ENV."""
-    selected_env = (env or os.getenv("APP_ENV", "dev")).lower()
+    selected_env = (env or os.getenv("APP_ENV") or "dev").lower()
     return _load_settings(selected_env)
 
 

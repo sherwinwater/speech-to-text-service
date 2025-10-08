@@ -15,7 +15,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: aws
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    if: >
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
 
     steps:
       - name: Deploy to server
@@ -35,30 +39,39 @@ jobs:
             IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
             IMAGE_BASE="${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}"
 
-            # Use the triggering CI SHA if present, else this workflow's SHA
+            # Use SHA from triggering CI if present; else this workflow's SHA
             IMAGE_TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
             IMAGE_REF="${IMAGE_BASE}:prod-${IMAGE_TAG}"
 
-            echo "[info] Deploying $IMAGE_REF"
+            echo "[info] Deploying ${IMAGE_REF}"
             cd "$DEPLOY_PATH"
 
-            # Pull immutable tag; if not found yet, fall back to :prod
+            # 1) Free port 8000 if any container is publishing it
+            PUBLISHING=$(sudo docker ps --filter "publish=8000" -q || true)
+            if [ -n "$PUBLISHING" ]; then
+              echo "[info] Stopping containers publishing :8000"
+              sudo docker stop $PUBLISHING || true
+              sudo docker rm $PUBLISHING || true
+            fi
+
+            # 2) Stop/remove by name (idempotent)
+            if sudo docker ps -a --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}$"; then
+              echo "[info] Stopping existing ${CONTAINER_NAME}"
+              sudo docker stop "${CONTAINER_NAME}" || true
+              sudo docker rm "${CONTAINER_NAME}" || true
+            fi
+
+            # 3) Pull immutable tag; if not found yet, fall back to :prod
             if ! sudo docker pull "$IMAGE_REF"; then
-              echo "[warn] $IMAGE_REF not found, falling back to ${IMAGE_BASE}:prod"
+              echo "[warn] $IMAGE_REF not found; falling back to ${IMAGE_BASE}:prod"
               IMAGE_REF="${IMAGE_BASE}:prod"
               sudo docker pull "$IMAGE_REF"
             fi
 
-            # Stop & remove old container if present
-            if sudo docker ps -a --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}$"; then
-              sudo docker stop "$CONTAINER_NAME" || true
-              sudo docker rm "$CONTAINER_NAME" || true
-            fi
-
-            # (Optional) persist model cache
+            # 4) Ensure host dirs for mounts exist
             mkdir -p "$DEPLOY_PATH/models"
 
-            # Run new container — simple: only APP_ENV=prod, no env-file
+            # 5) Run new container (no env file; only APP_ENV=prod)
             sudo docker run -d \
               --name "$CONTAINER_NAME" \
               --restart unless-stopped \
