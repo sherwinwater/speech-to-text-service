@@ -1,3 +1,7 @@
+import builtins
+import importlib
+import sys
+
 import pytest
 from pydantic import ValidationError
 
@@ -61,7 +65,8 @@ class TestTranscribeResponse:
                 segments=[],
             )
 
-    def test_response_serialization(self):
+    @pytest.mark.parametrize("force_legacy", [False, True])
+    def test_response_serialization(self, force_legacy):
         response = TranscribeResponse(
             text="hello world",
             language=None,
@@ -70,9 +75,35 @@ class TestTranscribeResponse:
             model="fake:small",
         )
 
-        data = response.model_dump()
+        serializer = getattr(response, "model_dump", None)
+        if force_legacy:
+            serializer = None
+
+        if serializer is None:
+            data = response.dict()
+        else:
+            data = serializer()
 
         assert data["text"] == "hello world"
         assert data["language"] is None
         assert data["segments"] == []
         assert data["model"] == "fake:small"
+
+def test_configdict_fallback(monkeypatch):
+    original_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "pydantic" and fromlist and "ConfigDict" in fromlist:
+            raise ImportError("ConfigDict missing")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    sys.modules.pop("api.models.schemas", None)
+
+    module = importlib.import_module("api.models.schemas")
+
+    assert module.ConfigDict is None
+    assert hasattr(module.UrlRequest, "Config")
+
+    sys.modules.pop("api.models.schemas", None)
+    importlib.import_module("api.models.schemas")

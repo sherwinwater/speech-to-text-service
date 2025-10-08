@@ -1,6 +1,10 @@
 
 import os
-from pydantic_settings import BaseSettings
+
+try:
+    from pydantic_settings import BaseSettings  # Pydantic v2 support
+except ImportError:
+    from pydantic import BaseSettings  # Fallback for Pydantic v1
 
 class Settings(BaseSettings):
     model_size: str = os.getenv("MODEL_SIZE", "small")

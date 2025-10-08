@@ -1,7 +1,11 @@
 
 from typing import List, Optional
 
-from pydantic import BaseModel, HttpUrl, Field, ConfigDict
+try:
+    from pydantic import BaseModel, HttpUrl, Field, ConfigDict  # Pydantic v2
+except ImportError:
+    from pydantic import BaseModel, HttpUrl, Field  # type: ignore
+    ConfigDict = None  # type: ignore
 
 class Segment(BaseModel):
     start: float
@@ -16,7 +20,11 @@ class TranscribeResponse(BaseModel):
     model: str
 
 class UrlRequest(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())
+    if ConfigDict:
+        model_config = ConfigDict(protected_namespaces=())
+    else:
+        class Config:  # type: ignore[no-redef]
+            pass
     
     url: HttpUrl
     language: Optional[str] = None

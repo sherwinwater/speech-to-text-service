@@ -13,6 +13,7 @@ from api.services.audio_service import normalize_to_wav_16k_mono
 from api.services.transcriber_service import Transcriber
 from api.models.schemas import TranscribeResponse, UrlRequest
 from api.config.logging import get_logger
+from api.models.schemas import Segment
 
 logger = get_logger("service.transcription")
 
@@ -145,7 +146,10 @@ class TranscriptionService:
         """
         lang = language or (req.language if req else None)
         msize = model_size or (req.model_size if req else settings.model_size)
+        if msize is None:
+            msize = settings.model_size  # ensure not None
         wt = word_timestamps or (req.word_timestamps if req else False)
+        wt = bool(wt)
         return lang, msize, wt
     
     async def transcribe_from_file(
@@ -206,7 +210,7 @@ class TranscriptionService:
         os.close(tmp_fd)
         
         try:
-            self.download_url_to_file(req.url, tmp_path)
+            self.download_url_to_file(str(req.url), tmp_path)
             wav_path, duration = self.normalize_and_validate_audio(tmp_path)
             lang, msize, wt = self.resolve_transcription_params(language, model_size, word_timestamps, req)
             
@@ -233,10 +237,10 @@ class TranscriptionService:
             text=result.text,
             language=result.language,
             duration_sec=duration,
-            segments=[{"start": s.start, "end": s.end, "text": s.text} for s in result.segments],
+            segments=[Segment(start=s.start, end=s.end, text=s.text) for s in result.segments],
             model=result.model,
         )
-    
+            
     @staticmethod
     def _cleanup_temp_file(path: str) -> None:
         """Clean up temporary file."""

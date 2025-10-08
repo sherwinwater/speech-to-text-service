@@ -1,3 +1,7 @@
+import importlib
+import sys
+import types
+
 import pytest
 
 from api.config.settings import Settings
@@ -45,3 +49,29 @@ def test_numeric_environment_coercion(monkeypatch):
     assert settings.max_file_mb == 42
     assert settings.max_duration_sec == 360
     assert settings.port == 1234
+
+
+def test_base_settings_fallback(monkeypatch):
+    fake_pydantic = types.ModuleType("pydantic")
+
+    class FakeBaseSettings:  # pragma: no cover - simple stub container
+        pass
+
+    fake_pydantic.BaseSettings = FakeBaseSettings
+    monkeypatch.setitem(sys.modules, "pydantic", fake_pydantic)
+
+    real_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "pydantic_settings":
+            raise ImportError("pydantic_settings missing")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+    sys.modules.pop("api.config.settings", None)
+
+    try:
+        module = importlib.import_module("api.config.settings")
+        assert issubclass(module.Settings, FakeBaseSettings)
+    finally:
+        sys.modules.pop("api.config.settings", None)

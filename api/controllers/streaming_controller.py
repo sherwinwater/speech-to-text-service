@@ -4,6 +4,7 @@ Streaming Controller - WebSocket endpoint for real-time transcription.
 
 import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from typing import Optional
 
 from api.services.transcriber_service import Transcriber, FasterWhisperTranscriber
 from api.services.streaming_service import StreamingService, StreamingSession
